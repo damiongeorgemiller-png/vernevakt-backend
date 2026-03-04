@@ -60,6 +60,19 @@ COMPANIES = {
 os.makedirs(CONFIG['output_dir'], exist_ok=True)
 
 # ============================================
+# IN-MEMORY DATA STORES
+# (In production, replace with a real database)
+# ============================================
+import uuid
+import hashlib
+
+WORKERS = {}   # hms_kort -> { name, hms_kort, company, role, pin_hash }
+REPORTS = []   # list of report dicts
+
+def hash_pin(pin):
+    return hashlib.sha256(pin.encode()).hexdigest()
+
+# ============================================
 # PDF GENERATOR (Option B - Detailed/Formal)
 # ============================================
 class PDFGenerator:
@@ -285,6 +298,8 @@ class PipelineHandler(BaseHTTPRequestHandler):
             self._json({'status': 'ok', 'version': '1.0.0', 'smtp_configured': bool(CONFIG['smtp']['user'])})
         elif path == '/health':
             self._json({'healthy': True})
+        elif path == '/api/reports':
+            self._handle_reports()
         else:
             self.send_error(404)
     
@@ -293,8 +308,187 @@ class PipelineHandler(BaseHTTPRequestHandler):
         
         if path == '/api/submit':
             self._handle_submit()
+        elif path == '/api/login':
+            self._handle_login()
+        elif path == '/api/register':
+            self._handle_register()
+        elif path == '/api/hazard':
+            self._handle_hazard()
+        elif path == '/api/approve':
+            self._handle_approve()
         else:
             self.send_error(404)
+    
+    def _handle_login(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length)
+            data = json.loads(body.decode('utf-8'))
+            
+            hms_kort = data.get('hms_kort', '').strip()
+            pin = data.get('pin', '').strip()
+            
+            if not hms_kort or not pin:
+                self._json({'error': 'HMS-kort og PIN er påkrevd'}, 400)
+                return
+            
+            worker = WORKERS.get(hms_kort)
+            if not worker or worker['pin_hash'] != hash_pin(pin):
+                self._json({'error': 'Ugyldig HMS-kort eller PIN'}, 401)
+                return
+            
+            self._json({
+                'success': True,
+                'worker': {
+                    'name': worker['name'],
+                    'hms_kort': worker['hms_kort'],
+                    'company': worker.get('company', ''),
+                    'role': worker['role']
+                }
+            })
+            print(f"[AUTH] Login: {worker['name']} ({worker['role']})")
+            
+        except Exception as e:
+            print(f"[ERROR] Login: {e}")
+            self._json({'error': str(e)}, 500)
+    
+    def _handle_register(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length)
+            data = json.loads(body.decode('utf-8'))
+            
+            name = data.get('name', '').strip()
+            hms_kort = data.get('hms_kort', '').strip()
+            company = data.get('company', '').strip()
+            role = data.get('role', 'worker').strip()
+            pin = data.get('pin', '').strip()
+            
+            if not name or not hms_kort or not pin:
+                self._json({'error': 'Navn, HMS-kort og PIN er påkrevd'}, 400)
+                return
+            
+            if len(pin) < 4:
+                self._json({'error': 'PIN må være minst 4 siffer'}, 400)
+                return
+            
+            if hms_kort in WORKERS:
+                self._json({'error': 'HMS-kort allerede registrert'}, 409)
+                return
+            
+            WORKERS[hms_kort] = {
+                'name': name,
+                'hms_kort': hms_kort,
+                'company': company,
+                'role': role,
+                'pin_hash': hash_pin(pin)
+            }
+            
+            self._json({'success': True, 'message': 'Registrering vellykket'})
+            print(f"[AUTH] Registered: {name} ({role})")
+            
+        except Exception as e:
+            print(f"[ERROR] Register: {e}")
+            self._json({'error': str(e)}, 500)
+    
+    def _handle_hazard(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length)
+            data = json.loads(body.decode('utf-8'))
+            
+            report_id = str(uuid.uuid4())
+            data['report_id'] = report_id
+            data['report_type'] = 'fare'
+            data['approval_status'] = 'pending'
+            
+            REPORTS.append({
+                'report_id': report_id,
+                'report_type': 'fare',
+                'site': data.get('site', {}).get('name', 'Ukjent'),
+                'worker': data.get('worker', {}).get('name', 'Ukjent'),
+                'timestamp': data.get('timestamp', datetime.now().isoformat()),
+                'approval_status': 'pending',
+                'data': data
+            })
+            
+            # Also generate PDF and email like regular submit
+            self._send_report_email(data, report_id)
+            
+            self._json({
+                'success': True,
+                'report_id': report_id,
+                'message': 'Faremelding mottatt'
+            })
+            print(f"[HAZARD] {report_id[:8]} from {data.get('worker', {}).get('name', 'Ukjent')}")
+            
+        except Exception as e:
+            print(f"[ERROR] Hazard: {e}")
+            self._json({'error': str(e)}, 500)
+    
+    def _handle_reports(self):
+        try:
+            report_list = [{
+                'report_id': r['report_id'],
+                'report_type': r['report_type'],
+                'site': r['site'],
+                'worker': r['worker'],
+                'timestamp': r['timestamp'],
+                'approval_status': r['approval_status']
+            } for r in REPORTS]
+            
+            report_list.sort(key=lambda x: x['timestamp'], reverse=True)
+            self._json({'reports': report_list})
+            
+        except Exception as e:
+            print(f"[ERROR] Reports: {e}")
+            self._json({'error': str(e)}, 500)
+    
+    def _handle_approve(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length)
+            data = json.loads(body.decode('utf-8'))
+            
+            report_id = data.get('report_id', '')
+            action = data.get('action', '')
+            reason = data.get('rejection_reason', '')
+            
+            if action not in ('approve', 'reject'):
+                self._json({'error': 'Ugyldig handling'}, 400)
+                return
+            
+            found = False
+            for report in REPORTS:
+                if report['report_id'] == report_id:
+                    report['approval_status'] = 'approved' if action == 'approve' else 'rejected'
+                    if reason:
+                        report['rejection_reason'] = reason
+                    found = True
+                    break
+            
+            if not found:
+                self._json({'error': 'Rapport ikke funnet'}, 404)
+                return
+            
+            self._json({'success': True, 'message': f'Rapport {action}d'})
+            print(f"[APPROVE] {report_id[:8]} -> {action}")
+            
+        except Exception as e:
+            print(f"[ERROR] Approve: {e}")
+            self._json({'error': str(e)}, 500)
+    
+    def _send_report_email(self, data, report_id):
+        """Helper to send email for hazard and regular reports"""
+        try:
+            office_email = data.get('officeEmail', '').strip() or CONFIG['default_office_email']
+            if office_email and '@' in office_email:
+                worker_name = data.get('worker', {}).get('name', 'Ukjent')
+                subject = f"Rapport {report_id[:8]} - {worker_name}"
+                body = f"Ny rapport mottatt.\n\nType: {data.get('report_type', 'ukjent')}\nArbeider: {worker_name}\nTidspunkt: {data.get('timestamp', 'N/A')}\n"
+                self.email_sender.send(to_email=office_email, subject=subject, body=body)
+        except Exception as e:
+            print(f"[EMAIL] Helper error: {e}")
     
     def _handle_submit(self):
         try:
@@ -302,8 +496,20 @@ class PipelineHandler(BaseHTTPRequestHandler):
             body = self.rfile.read(length)
             data = json.loads(body.decode('utf-8'))
             
-            job_id = data.get('id', 'unknown')
+            job_id = data.get('id', str(uuid.uuid4()))
+            data['id'] = job_id
             print(f"\n[JOB] Received: {job_id}")
+            
+            # Store in reports list
+            REPORTS.append({
+                'report_id': job_id,
+                'report_type': data.get('report_type', 'daglig'),
+                'site': data.get('site', {}).get('name', '') if isinstance(data.get('site'), dict) else data.get('customer', 'Ukjent'),
+                'worker': data.get('worker', {}).get('name', '') if isinstance(data.get('worker'), dict) else data.get('plumber', {}).get('name', 'Ukjent'),
+                'timestamp': data.get('timestamp', datetime.now().isoformat()),
+                'approval_status': 'pending',
+                'data': data
+            })
             
             # Generate PDF
             print("[JOB] Generating PDF...")
@@ -398,6 +604,7 @@ Automatisk generert av VVS Dokumentasjon
             self._json({
                 'success': True,
                 'job_id': job_id,
+                'report_id': job_id,
                 'pdf_generated': True,
                 'email_sent': email_sent,
                 'message': 'Jobb mottatt og behandlet'
