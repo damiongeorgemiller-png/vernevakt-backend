@@ -385,8 +385,7 @@ def generate_sha_report(data, photos, output_path):
                 rl_img = Image(img_buffer, width=75*mm, height=56*mm)
                 
                 label = photo_labels[i] if i < len(photo_labels) else f'Bilde {i+1}'
-                cell_content = [rl_img, Paragraph(f"<b>{label}</b>", small_style)]
-                row.append(cell_content)
+                row.append(rl_img)
                 
             except Exception as e:
                 logger.error(f"Error processing photo {i}: {e}")
@@ -398,7 +397,7 @@ def generate_sha_report(data, photos, output_path):
         
         if row:  # Add remaining photos
             while len(row) < 2:
-                row.append([''])
+                row.append([Paragraph('', small_style)])
             photo_table_data.append(row)
         
         if photo_table_data:
