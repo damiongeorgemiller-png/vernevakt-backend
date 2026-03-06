@@ -761,15 +761,19 @@ Rapport-ID: {report_id}
             # Generate report ID
             report_id = str(uuid.uuid4())
             data['report_id'] = report_id
-            
-            # Create integrity hash
-            data_str = json.dumps(data, sort_keys=True)
-            integrity_hash = hashlib.sha256(data_str.encode()).hexdigest()
+
+            # Safe extraction - ensure dicts, never None
+            worker = data.get('worker') or {}
+            site = data.get('site') or {}
+            hazard = data.get('hazard') or {}
+            if not isinstance(worker, dict): worker = {}
+            if not isinstance(site, dict): site = {}
+            if not isinstance(hazard, dict): hazard = {}
+
+            # Create integrity hash (exclude photos)
+            hash_data = {k: v for k, v in data.items() if k != 'photos'}
+            integrity_hash = hashlib.sha256(json.dumps(hash_data, sort_keys=True).encode()).hexdigest()
             data['integrity_hash'] = integrity_hash
-            
-            # Store hazard report in memory (for history)
-            worker = data.get('worker', {})
-            site = data.get('site', {})
             REPORTS.append({
                 'report_id': report_id,
                 'report_type': 'fare',
@@ -782,8 +786,6 @@ Rapport-ID: {report_id}
             })
             
             # Log audit entry (critical)
-            worker = data.get('worker', {})
-            hazard = data.get('hazard', {})
             log_audit(
                 action='HAZARD_REPORTED',
                 user_id=worker.get('hms_kort', 'unknown'),
@@ -836,7 +838,8 @@ Rapport-ID: {report_id}
         try:
             report_id = data.get('report_id')
             action = data.get('action')  # 'approve' or 'reject'
-            manager = data.get('manager', {})
+            manager = data.get('manager') or {}
+            if not isinstance(manager, dict): manager = {}
             
             if not report_id or not action:
                 self._send_response(400, {'error': 'Missing report_id or action'})
