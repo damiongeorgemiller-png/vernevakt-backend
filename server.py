@@ -225,8 +225,10 @@ def generate_sha_report(data, photos, output_path):
     story.append(Spacer(1, 5*mm))
     
     # ===== METADATA TABLE =====
-    site_info = data.get('site', {})
-    worker_info = data.get('worker', {})
+    site_info = data.get('site') or {}
+    worker_info = data.get('worker') or {}
+    if not isinstance(site_info, dict): site_info = {}
+    if not isinstance(worker_info, dict): worker_info = {}
     
     # Format timestamp
     timestamp = data.get('timestamp', datetime.now().isoformat())
@@ -316,7 +318,8 @@ def generate_sha_report(data, photos, output_path):
     if report_type == 'fare':
         story.append(Paragraph("⚠️ FAREDETALJER", header_style))
         
-        hazard = data.get('hazard', {})
+        hazard = data.get('hazard') or {}
+        if not isinstance(hazard, dict): hazard = {}
         hazard_data = [
             ['Type fare:', hazard.get('type', 'Ikke spesifisert')],
             ['Alvorlighetsgrad:', hazard.get('severity', 'Ikke vurdert')],
@@ -414,7 +417,7 @@ def generate_sha_report(data, photos, output_path):
     story.append(Spacer(1, 10*mm))
     story.append(Paragraph("GODKJENNING", header_style))
     
-    approval = data.get('approval', {})
+    approval = data.get('approval') or {}
     approval_status = approval.get('status', 'pending')
     
     if approval_status == 'approved':
@@ -752,7 +755,8 @@ Rapport-ID: {report_id}
     
     def _handle_hazard(self, data):
         """Handle immediate hazard report"""
-        logger.info("[HAZARD] Received hazard report")
+        logger.info(f"[HAZARD] Raw data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+        logger.info(f"[HAZARD] worker={data.get('worker')} site={data.get('site')} hazard={data.get('hazard')}")
         
         try:
             # Force report type
