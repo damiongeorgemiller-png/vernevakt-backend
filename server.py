@@ -967,35 +967,6 @@ Rapport-ID: {report_id}
                     'role': user['role'],
                 }
             })
-                return
-            
-            pw_hash = hashlib.sha256(
-                (password + CONFIG['signing_key']).encode()
-            ).hexdigest()
-            
-            if pw_hash != user['password_hash']:
-                self._send_response(401, {'error': 'Feil brukernavn eller passord'})
-                return
-            
-            # Create a simple session token
-            token_raw = f"{username}{datetime.now(timezone.utc).isoformat()}{CONFIG['signing_key']}"
-            token = hashlib.sha256(token_raw.encode()).hexdigest()
-            
-            log_audit(
-                action='USER_LOGIN',
-                user_id=username,
-                details=f"Successful login for {user['name']}"
-            )
-            
-            self._send_response(200, {
-                'success': True,
-                'token': token,
-                'username': username,
-                'name': user['name'],
-                'hms_kort': user['hms_kort'],
-                'role': user['role'],
-            })
-            
         except Exception as e:
             logger.error(f"[LOGIN] Error: {e}")
             self._send_response(500, {'error': str(e)})
