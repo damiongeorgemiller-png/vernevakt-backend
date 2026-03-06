@@ -640,16 +640,18 @@ class SHAHandler(BaseHTTPRequestHandler):
             # Generate report ID
             report_id = str(uuid.uuid4())
             data['report_id'] = report_id
-            
-            # Create integrity hash
-            data_str = json.dumps(data, sort_keys=True)
-            integrity_hash = hashlib.sha256(data_str.encode()).hexdigest()
+
+            # Safe extraction - ensure dicts, never None
+            report_type = data.get('report_type') or 'daglig'
+            worker = data.get('worker') or {}
+            site = data.get('site') or {}
+            if not isinstance(worker, dict): worker = {}
+            if not isinstance(site, dict): site = {}
+
+            # Create integrity hash (exclude photos to keep it fast)
+            hash_data = {k: v for k, v in data.items() if k != 'photos'}
+            integrity_hash = hashlib.sha256(json.dumps(hash_data, sort_keys=True).encode()).hexdigest()
             data['integrity_hash'] = integrity_hash
-            
-            # Store report in memory (for history)
-            report_type = data.get('report_type', 'daglig')
-            worker = data.get('worker', {})
-            site = data.get('site', {})
             REPORTS.append({
                 'report_id': report_id,
                 'report_type': report_type,
@@ -662,7 +664,6 @@ class SHAHandler(BaseHTTPRequestHandler):
             })
             
             # Log audit entry
-            worker = data.get('worker', {})
             log_audit(
                 action='REPORT_SUBMITTED',
                 user_id=worker.get('hms_kort', 'unknown'),
@@ -685,7 +686,6 @@ class SHAHandler(BaseHTTPRequestHandler):
                 pdf_data = f.read()
             
             # Prepare email
-            site = data.get('site', {})
             office_email = site.get('office_email') or CONFIG['default_office_email']
             
             report_type = data.get('report_type', 'daglig')
