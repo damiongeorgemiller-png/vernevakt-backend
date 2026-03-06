@@ -66,9 +66,235 @@ logger = logging.getLogger(__name__)
 # ============================================
 # AUDIT LOG - Immutable Record
 # ============================================
-AUDIT_LOG = []  # In production, this would be a database
-USERS = {}      # username -> {password_hash, name, hms_kort, role, created_at}
-REPORTS = []    # list of submitted reports (in-memory, resets on restart)
+# ============================================
+# DATABASE SETUP - PostgreSQL with in-memory fallback
+# ============================================
+import threading
+
+# In-memory fallback (used if DATABASE_URL not set)
+_AUDIT_LOG = []
+_USERS = {}
+_REPORTS = []
+_DB_LOCK = threading.Lock()
+
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
+
+def get_db():
+    """Get a database connection, or None if not configured"""
+    if not DATABASE_URL:
+        return None
+    try:
+        import psycopg2
+        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        return conn
+    except Exception as e:
+        logger.error(f"[DB] Connection failed: {e}")
+        return None
+
+def init_db():
+    """Create tables if they don't exist"""
+    conn = get_db()
+    if not conn:
+        logger.warning("[DB] No DATABASE_URL set — using in-memory storage (data resets on restart)")
+        return False
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                hms_kort TEXT PRIMARY KEY,
+                pin_hash TEXT NOT NULL,
+                name TEXT NOT NULL,
+                company TEXT,
+                role TEXT DEFAULT 'worker',
+                created_at TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS reports (
+                report_id TEXT PRIMARY KEY,
+                report_type TEXT,
+                status TEXT DEFAULT 'pending',
+                timestamp TEXT,
+                site_name TEXT,
+                worker_name TEXT,
+                worker_hms TEXT,
+                integrity_hash TEXT,
+                approved_by TEXT,
+                approved_at TEXT,
+                rejection_reason TEXT,
+                full_data TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT,
+                action TEXT,
+                user_id TEXT,
+                record_id TEXT,
+                details TEXT,
+                signature TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+        logger.info("[DB] Database initialized successfully")
+        return True
+    except Exception as e:
+        logger.error(f"[DB] Init failed: {e}")
+        conn.close()
+        return False
+
+# ── USER OPERATIONS ──
+def db_get_user(hms_kort):
+    conn = get_db()
+    if not conn:
+        return _USERS.get(hms_kort)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT hms_kort,pin_hash,name,company,role,created_at FROM users WHERE hms_kort=%s", (hms_kort,))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            return {'hms_kort':row[0],'pin_hash':row[1],'name':row[2],'company':row[3],'role':row[4],'created_at':row[5]}
+        return None
+    except Exception as e:
+        logger.error(f"[DB] get_user error: {e}")
+        conn.close()
+        return _USERS.get(hms_kort)
+
+def db_save_user(hms_kort, user_data):
+    conn = get_db()
+    if not conn:
+        _USERS[hms_kort] = user_data
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO users (hms_kort,pin_hash,name,company,role,created_at)
+            VALUES (%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (hms_kort) DO UPDATE
+            SET pin_hash=EXCLUDED.pin_hash, name=EXCLUDED.name,
+                company=EXCLUDED.company, role=EXCLUDED.role
+        """, (hms_kort, user_data['pin_hash'], user_data['name'],
+              user_data.get('company',''), user_data.get('role','worker'),
+              user_data.get('created_at','')))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"[DB] save_user error: {e}")
+        conn.close()
+        _USERS[hms_kort] = user_data
+
+def db_user_exists(hms_kort):
+    conn = get_db()
+    if not conn:
+        return hms_kort in _USERS
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM users WHERE hms_kort=%s", (hms_kort,))
+        exists = cur.fetchone() is not None
+        conn.close()
+        return exists
+    except Exception as e:
+        logger.error(f"[DB] user_exists error: {e}")
+        conn.close()
+        return hms_kort in _USERS
+
+# ── REPORT OPERATIONS ──
+def db_save_report(report):
+    conn = get_db()
+    if not conn:
+        _REPORTS.append(report)
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO reports (report_id,report_type,status,timestamp,site_name,
+                                 worker_name,worker_hms,integrity_hash,full_data)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (report_id) DO NOTHING
+        """, (report['report_id'], report['report_type'], report.get('status','pending'),
+              report['timestamp'], report.get('site_name',''), report.get('worker_name',''),
+              report.get('worker_hms',''), report.get('integrity_hash',''),
+              json.dumps(report)))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"[DB] save_report error: {e}")
+        conn.close()
+        _REPORTS.append(report)
+
+def db_get_reports(limit=200):
+    conn = get_db()
+    if not conn:
+        return list(reversed(_REPORTS[-limit:]))
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT report_id,report_type,status,timestamp,site_name,
+                   worker_name,worker_hms,integrity_hash,approved_by,approved_at,rejection_reason
+            FROM reports ORDER BY timestamp DESC LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+        conn.close()
+        return [{'report_id':r[0],'report_type':r[1],'status':r[2],'timestamp':r[3],
+                 'site_name':r[4],'worker_name':r[5],'worker_hms':r[6],
+                 'integrity_hash':r[7],'approved_by':r[8],'approved_at':r[9],
+                 'rejection_reason':r[10]} for r in rows]
+    except Exception as e:
+        logger.error(f"[DB] get_reports error: {e}")
+        conn.close()
+        return list(reversed(_REPORTS[-limit:]))
+
+def db_get_report(report_id):
+    conn = get_db()
+    if not conn:
+        for r in _REPORTS:
+            if r.get('report_id') == report_id:
+                return r
+        return None
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM reports WHERE report_id=%s", (report_id,))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            return {'report_id':row[0],'report_type':row[1],'status':row[2],
+                    'timestamp':row[3],'site_name':row[4],'worker_name':row[5],
+                    'worker_hms':row[6],'integrity_hash':row[7],
+                    'approved_by':row[8],'approved_at':row[9],'rejection_reason':row[10]}
+        return None
+    except Exception as e:
+        logger.error(f"[DB] get_report error: {e}")
+        conn.close()
+        return None
+
+def db_update_report_status(report_id, status, approved_by, approved_at, rejection_reason=''):
+    conn = get_db()
+    if not conn:
+        for r in _REPORTS:
+            if r.get('report_id') == report_id:
+                r['status'] = status
+                r['approved_by'] = approved_by
+                r['approved_at'] = approved_at
+                r['rejection_reason'] = rejection_reason
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE reports SET status=%s, approved_by=%s, approved_at=%s, rejection_reason=%s
+            WHERE report_id=%s
+        """, (status, approved_by, approved_at, rejection_reason, report_id))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"[DB] update_report error: {e}")
+        conn.close()
+
+# Legacy in-memory aliases (kept so existing code doesn't break)
+AUDIT_LOG = _AUDIT_LOG
+REPORTS = _REPORTS
 
 def log_audit(action, user_id, details, record_id=None):
     """Create immutable audit entry with tamper-proof signature"""
@@ -683,7 +909,7 @@ class SHAHandler(BaseHTTPRequestHandler):
         
         elif path == '/api/reports':
             # Return report history (last 200, newest first)
-            self._send_response(200, {'reports': list(reversed(REPORTS[-200:]))})
+            self._send_response(200, {'reports': db_get_reports(200)})
 
         elif path.startswith('/approve'):
             # Manager approval page - served as HTML
@@ -768,7 +994,7 @@ class SHAHandler(BaseHTTPRequestHandler):
             hash_data = {k: v for k, v in data.items() if k != 'photos'}
             integrity_hash = hashlib.sha256(json.dumps(hash_data, sort_keys=True).encode()).hexdigest()
             data['integrity_hash'] = integrity_hash
-            REPORTS.append({
+            db_save_report({
                 'report_id': report_id,
                 'report_type': report_type,
                 'status': 'pending',
@@ -897,7 +1123,7 @@ Rapport-ID: {report_id}
             hash_data = {k: v for k, v in data.items() if k != 'photos'}
             integrity_hash = hashlib.sha256(json.dumps(hash_data, sort_keys=True).encode()).hexdigest()
             data['integrity_hash'] = integrity_hash
-            REPORTS.append({
+            db_save_report({
                 'report_id': report_id,
                 'report_type': 'fare',
                 'status': 'pending',
@@ -968,16 +1194,15 @@ Rapport-ID: {report_id}
                 self._send_response(400, {'error': 'Missing report_id or action'})
                 return
             
-            # Update report status in memory
+            # Update report status in database
             new_status = 'approved' if action == 'approve' else 'rejected'
-            for r in REPORTS:
-                if r['report_id'] == report_id:
-                    r['status'] = new_status
-                    r['approved_by'] = manager.get('name', 'Ukjent')
-                    r['approved_at'] = datetime.now(timezone.utc).isoformat()
-                    if action == 'reject':
-                        r['rejection_reason'] = data.get('rejection_reason', '')
-                    break
+            approved_at = datetime.now(timezone.utc).isoformat()
+            db_update_report_status(
+                report_id, new_status,
+                manager.get('name', 'Ukjent'),
+                approved_at,
+                data.get('rejection_reason', '')
+            )
             
             # Log audit entry
             log_audit(
@@ -1016,7 +1241,7 @@ Rapport-ID: {report_id}
                 self._send_response(400, {'error': 'PIN må være minst 4 siffer'})
                 return
             
-            if hms_kort in USERS:
+            if db_user_exists(hms_kort):
                 self._send_response(409, {'error': 'HMS-kort er allerede registrert'})
                 return
             
@@ -1025,14 +1250,14 @@ Rapport-ID: {report_id}
                 (pin + CONFIG['signing_key']).encode()
             ).hexdigest()
             
-            USERS[hms_kort] = {
+            db_save_user(hms_kort, {
                 'pin_hash': pin_hash,
                 'name': name,
                 'hms_kort': hms_kort,
                 'company': company,
                 'role': role,
                 'created_at': datetime.now(timezone.utc).isoformat(),
-            }
+            })
             
             log_audit(
                 action='USER_REGISTERED',
@@ -1064,7 +1289,7 @@ Rapport-ID: {report_id}
                 self._send_response(400, {'error': 'HMS-kort og PIN er påkrevd'})
                 return
             
-            user = USERS.get(hms_kort)
+            user = db_get_user(hms_kort)
             
             if not user:
                 self._send_response(401, {'error': 'Feil HMS-kort eller PIN'})
@@ -1100,11 +1325,7 @@ Rapport-ID: {report_id}
     def _serve_approval_page(self, report_id):
         """Serve a simple HTML approval page for managers"""
         # Find the report
-        report = None
-        for r in REPORTS:
-            if r.get('report_id') == report_id:
-                report = r
-                break
+        report = db_get_report(report_id)
 
         if not report:
             html = '<html><body><h2>Rapport ikke funnet.</h2></body></html>'
@@ -1222,6 +1443,7 @@ def main():
     """)
     
     logger.info(f"Server starting on port {port}")
+    init_db()
     logger.info(f"SMTP configured: {bool(CONFIG['smtp']['user'] and CONFIG['smtp']['password'])}")
     logger.info(f"Default email: {CONFIG['default_office_email']}")
     logger.info("Ready to receive SHA reports")
