@@ -161,310 +161,392 @@ VERNERUNDE_TEMPLATES = {
 # PDF GENERATION - Norwegian Compliance Format
 # ============================================
 def generate_sha_report(data, photos, output_path):
-    """Generate compliant SHA report PDF in Norwegian"""
+    """Generate professional Vernevakt PDF report matching the sample design"""
+    from reportlab.platypus import KeepTogether
     
     doc = SimpleDocTemplate(
         output_path,
         pagesize=A4,
-        rightMargin=20*mm,
-        leftMargin=20*mm,
-        topMargin=20*mm,
-        bottomMargin=20*mm
+        rightMargin=18*mm,
+        leftMargin=18*mm,
+        topMargin=16*mm,
+        bottomMargin=16*mm
     )
-    
+
+    # ── Colors ──
+    DARK       = HexColor('#1a2535')
+    MID        = HexColor('#2d3a4a')
+    LIGHT_BG   = HexColor('#f4f6f8')
+    BORDER     = HexColor('#d0d7e0')
+    GREEN      = HexColor('#2e7d32')
+    GREEN_BG   = HexColor('#e8f5e9')
+    RED        = HexColor('#c62828')
+    RED_BG     = HexColor('#ffebee')
+    AMBER      = HexColor('#e65100')
+    AMBER_BG   = HexColor('#fff3e0')
+    ORANGE     = HexColor('#ef6c00')
+    ORANGE_BG  = HexColor('#fff8e1')
+    MUTED      = HexColor('#546e7a')
+    WHITE      = HexColor('#ffffff')
+
+    SEV_COLORS = {
+        'lav':     (HexColor('#1b5e20'), HexColor('#e8f5e9')),
+        'middels': (HexColor('#f57f17'), HexColor('#fffde7')),
+        'hoy':     (HexColor('#e65100'), HexColor('#fff3e0')),
+        'høy':     (HexColor('#e65100'), HexColor('#fff3e0')),
+        'kritisk': (HexColor('#b71c1c'), HexColor('#ffebee')),
+    }
+
     styles = getSampleStyleSheet()
-    
-    # Custom styles
-    title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
-        fontSize=18,
-        spaceAfter=12,
-        textColor=HexColor('#1a365d'),
-        alignment=TA_CENTER
-    )
-    
-    header_style = ParagraphStyle(
-        'CustomHeader',
-        parent=styles['Heading2'],
-        fontSize=12,
-        spaceBefore=12,
-        spaceAfter=6,
-        textColor=HexColor('#2d3748'),
-        borderWidth=1,
-        borderColor=HexColor('#e2e8f0'),
-        borderPadding=5,
-        backColor=HexColor('#f7fafc')
-    )
-    
-    normal_style = ParagraphStyle(
-        'CustomNormal',
-        parent=styles['Normal'],
-        fontSize=10,
-        spaceAfter=6
-    )
-    
-    small_style = ParagraphStyle(
-        'CustomSmall',
-        parent=styles['Normal'],
-        fontSize=8,
-        textColor=HexColor('#718096')
-    )
-    
+
+    def style(name, **kw):
+        s = ParagraphStyle(name, parent=styles['Normal'], **kw)
+        return s
+
+    title_st  = style('T', fontSize=15, fontName='Helvetica-Bold', textColor=DARK, alignment=TA_CENTER, spaceAfter=2)
+    sub_st    = style('S', fontSize=9,  fontName='Helvetica',      textColor=MUTED, alignment=TA_CENTER, spaceAfter=8)
+    sec_st    = style('H', fontSize=9,  fontName='Helvetica-Bold', textColor=WHITE, spaceAfter=0)
+    cell_key  = style('CK', fontSize=8.5, fontName='Helvetica-Bold', textColor=MUTED)
+    cell_val  = style('CV', fontSize=8.5, fontName='Helvetica',      textColor=DARK)
+    chk_st    = style('CH', fontSize=8.5, fontName='Helvetica',      textColor=DARK)
+    foot_st   = style('F',  fontSize=7,   fontName='Helvetica',      textColor=MUTED, alignment=TA_CENTER)
+    small_st  = style('SM', fontSize=7.5, fontName='Helvetica',      textColor=MUTED)
+
+    def section_header(text, color=DARK):
+        """Dark bar section header like the sample"""
+        data_h = [[Paragraph(f'<b>{text}</b>', style('SH', fontSize=9, fontName='Helvetica-Bold', textColor=WHITE))]]
+        t = Table(data_h, colWidths=[174*mm])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), color),
+            ('TOPPADDING', (0,0), (-1,-1), 5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ('LEFTPADDING', (0,0), (-1,-1), 8),
+        ]))
+        return t
+
     story = []
-    
-    # ===== HEADER =====
-    report_type = data.get('report_type', 'daglig')
+
+    # ── Safe data extraction ──
+    report_type  = data.get('report_type') or 'daglig'
+    site         = data.get('site') or {}
+    worker       = data.get('worker') or {}
+    gps          = data.get('gps') or {}
+    checklist    = data.get('checklist') or {}
+    hazard       = data.get('hazard') or {}
+    notes        = data.get('notes') or ''
+    approval     = data.get('approval') or {}
+    report_id    = data.get('report_id', '')
+    timestamp    = data.get('timestamp', '')
+    if not isinstance(site, dict): site = {}
+    if not isinstance(worker, dict): worker = {}
+    if not isinstance(gps, dict): gps = {}
+    if not isinstance(checklist, dict): checklist = {}
+    if not isinstance(hazard, dict): hazard = {}
+    if not isinstance(approval, dict): approval = {}
+
     template = VERNERUNDE_TEMPLATES.get(report_type, VERNERUNDE_TEMPLATES['daglig'])
-    
-    if report_type == 'fare':
-        story.append(Paragraph("⚠️ FARERAPPORT - HAZARD REPORT", title_style))
-    else:
-        story.append(Paragraph(f"SHA-RAPPORT: {template['name'].upper()}", title_style))
-    
-    story.append(Spacer(1, 5*mm))
-    
-    # ===== METADATA TABLE =====
-    site_info = data.get('site') or {}
-    worker_info = data.get('worker') or {}
-    if not isinstance(site_info, dict): site_info = {}
-    if not isinstance(worker_info, dict): worker_info = {}
-    
-    # Format timestamp
-    timestamp = data.get('timestamp', datetime.now().isoformat())
+
+    # Format date/time
     try:
         dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-        formatted_date = dt.strftime('%d.%m.%Y')
-        formatted_time = dt.strftime('%H:%M')
+        fmt_date = dt.strftime('%d.%m.%Y')
+        fmt_time = dt.strftime('%H:%M')
     except:
-        formatted_date = timestamp[:10]
-        formatted_time = timestamp[11:16] if len(timestamp) > 16 else ''
-    
-    metadata_data = [
-        ['Byggeplass:', site_info.get('name', 'Ikke oppgitt'), 'Dato:', formatted_date],
-        ['Adresse:', site_info.get('address', 'Ikke oppgitt'), 'Klokkeslett:', formatted_time],
-        ['Utført av:', worker_info.get('name', 'Ikke oppgitt'), 'HMS-kort nr:', worker_info.get('hms_kort', 'Ikke oppgitt')],
-        ['Firma:', site_info.get('company', 'Ikke oppgitt'), 'Rapport-ID:', data.get('report_id', '')[:8]],
-    ]
-    
-    metadata_table = Table(metadata_data, colWidths=[25*mm, 55*mm, 25*mm, 55*mm])
-    metadata_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
-        ('TEXTCOLOR', (0, 0), (0, -1), HexColor('#4a5568')),
-        ('TEXTCOLOR', (2, 0), (2, -1), HexColor('#4a5568')),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#e2e8f0')),
-        ('BACKGROUND', (0, 0), (-1, -1), HexColor('#f7fafc')),
+        fmt_date = datetime.now().strftime('%d.%m.%Y')
+        fmt_time = datetime.now().strftime('%H:%M')
+
+    # ── HEADER — clean, no nested tables ──
+    ORANGE = HexColor('#f59e0b')
+    BLACK  = HexColor('#111111')
+
+    type_label = {'daglig': 'Daglig vernerunde', 'ukentlig': 'Ukentlig vernerunde', 'fare': 'Farerapport'}.get(report_type, report_type)
+    title_text = 'FARERAPPORT' if report_type == 'fare' else 'VERNEVAKT'
+
+    # Row 1: black background, VERNEVAKT left, report type right
+    hdr_row1 = Table([[
+        Paragraph(f'<b>{title_text}</b>',
+                  style('H1L', fontSize=26, fontName='Helvetica-Bold', textColor=ORANGE, leading=30)),
+        Paragraph(f'Rapport type<br/><b>{type_label}</b>',
+                  style('H1R', fontSize=11, fontName='Helvetica-Bold', textColor=WHITE,
+                        alignment=TA_RIGHT, leading=16)),
+    ]], colWidths=[100*mm, 74*mm])
+    hdr_row1.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), BLACK),
+        ('TOPPADDING', (0,0), (-1,-1), 12),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('LEFTPADDING', (0,0), (0,0), 10),
+        ('RIGHTPADDING', (1,0), (1,0), 10),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]))
-    story.append(metadata_table)
-    story.append(Spacer(1, 8*mm))
-    
-    # ===== GPS VERIFICATION =====
-    gps = data.get('gps') or {}
+    story.append(hdr_row1)
+
+    # Row 2: subtitle on black background
+    hdr_row2 = Table([[
+        Paragraph('Sikker HMS-dokumentasjon for norske byggeplasser',
+                  style('H2', fontSize=8, fontName='Helvetica', textColor=HexColor('#aaaaaa'))),
+        Paragraph('', style('H2R', fontSize=8)),
+    ]], colWidths=[120*mm, 54*mm])
+    hdr_row2.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), BLACK),
+        ('TOPPADDING', (0,0), (-1,-1), 0),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 10),
+        ('LEFTPADDING', (0,0), (0,0), 10),
+    ]))
+    story.append(hdr_row2)
+
+    # Orange line
+    orange_line = Table([['']], colWidths=[174*mm], rowHeights=[3.5])
+    orange_line.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), ORANGE),
+        ('TOPPADDING', (0,0), (-1,-1), 0),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+    ]))
+    story.append(orange_line)
+    story.append(Spacer(1, 5*mm))
+
+    # ── RAPPORT INFO ──
+    story.append(section_header('RAPPORTINFORMASJON'))
+
+    gps_text = ''
     if gps.get('lat') and gps.get('lng'):
-        gps_text = f"📍 GPS-verifisert posisjon: {gps['lat']:.6f}, {gps['lng']:.6f}"
+        gps_text = f"{gps['lat']:.4f}° N, {gps['lng']:.4f}° E"
         if gps.get('accuracy'):
             gps_text += f" (±{gps['accuracy']}m)"
-        story.append(Paragraph(gps_text, small_style))
-        story.append(Spacer(1, 3*mm))
-    
-    # ===== CHECKLIST RESULTS =====
-    story.append(Paragraph("SJEKKPUNKTER", header_style))
-    
-    checklist = data.get('checklist') or {}
-    checklist_data = [['Status', 'Sjekkpunkt', 'Kritisk']]
-    
-    for item in template['items']:
-        item_id = item['id']
-        status = checklist.get(item_id, None)
-        
-        if status == True:
-            status_text = '✓ OK'
-            status_color = HexColor('#38a169')
-        elif status == False:
-            status_text = '✗ AVVIK'
-            status_color = HexColor('#e53e3e')
-        else:
-            status_text = '— N/A'
-            status_color = HexColor('#718096')
-        
-        critical_text = 'JA' if item['critical'] else 'Nei'
-        checklist_data.append([status_text, item['text'], critical_text])
-    
-    checklist_table = Table(checklist_data, colWidths=[20*mm, 115*mm, 20*mm])
-    checklist_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('BACKGROUND', (0, 0), (-1, 0), HexColor('#2d3748')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), white),
-        ('ALIGN', (0, 0), (0, -1), 'CENTER'),
-        ('ALIGN', (2, 0), (2, -1), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#e2e8f0')),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f7fafc')]),
+
+    short_id = report_id[:8] if report_id else 'N/A'
+
+    info_rows = [
+        [Paragraph('Byggeplass', cell_key), Paragraph(site.get('name','Ikke oppgitt'), cell_val),
+         Paragraph('Dato', cell_key), Paragraph(fmt_date, cell_val)],
+        [Paragraph('Firma', cell_key), Paragraph(site.get('company','Ikke oppgitt'), cell_val),
+         Paragraph('Tidspunkt', cell_key), Paragraph(fmt_time, cell_val)],
+        [Paragraph('Innrapportert av', cell_key), Paragraph(worker.get('name','Ikke oppgitt'), cell_val),
+         Paragraph('HMS-kort nr', cell_key), Paragraph(worker.get('hms_kort','Ikke oppgitt'), cell_val)],
+    ]
+    if gps_text:
+        info_rows.append([
+            Paragraph('GPS', cell_key), Paragraph(gps_text, cell_val),
+            Paragraph('Rapport-ID', cell_key), Paragraph(short_id, cell_val)
+        ])
+    else:
+        info_rows.append([
+            Paragraph('Adresse', cell_key), Paragraph(site.get('address','Ikke oppgitt'), cell_val),
+            Paragraph('Rapport-ID', cell_key), Paragraph(short_id, cell_val)
+        ])
+
+    info_t = Table(info_rows, colWidths=[30*mm, 57*mm, 30*mm, 57*mm])
+    info_t.setStyle(TableStyle([
+        ('FONTSIZE', (0,0), (-1,-1), 8.5),
+        ('GRID', (0,0), (-1,-1), 0.4, BORDER),
+        ('BACKGROUND', (0,0), (0,-1), LIGHT_BG),
+        ('BACKGROUND', (2,0), (2,-1), LIGHT_BG),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('LEFTPADDING', (0,0), (-1,-1), 7),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]))
-    story.append(checklist_table)
-    story.append(Spacer(1, 8*mm))
-    
-    # ===== HAZARD DETAILS (if hazard report) =====
-    if report_type == 'fare':
-        story.append(Paragraph("⚠️ FAREDETALJER", header_style))
-        
-        hazard = data.get('hazard') or {}
-        if not isinstance(hazard, dict): hazard = {}
-        hazard_data = [
-            ['Type fare:', hazard.get('type', 'Ikke spesifisert')],
-            ['Alvorlighetsgrad:', hazard.get('severity', 'Ikke vurdert')],
-            ['Beskrivelse:', hazard.get('description', 'Ingen beskrivelse')],
-            ['Umiddelbare tiltak:', hazard.get('immediate_action', 'Ingen tiltak beskrevet')],
+    story.append(info_t)
+    story.append(Spacer(1, 4*mm))
+
+    # ── CHECKLIST ──
+    story.append(section_header(f'SJEKKPUNKTER — {type_label.upper()}'))
+
+    chk_header = [
+        Paragraph('<b>Status</b>', style('CH2', fontSize=8, fontName='Helvetica-Bold', textColor=WHITE)),
+        Paragraph('<b>Sjekkpunkt</b>', style('CH2', fontSize=8, fontName='Helvetica-Bold', textColor=WHITE)),
+        Paragraph('<b>Kritisk</b>', style('CH2', fontSize=8, fontName='Helvetica-Bold', textColor=WHITE)),
+    ]
+    chk_rows = [chk_header]
+    avvik_items = []
+
+    for item in template['items']:
+        iid = item['id']
+        val = checklist.get(iid, None)
+        if val is True:
+            status_txt = Paragraph('<font color="#2e7d32"><b>&#10003; OK</b></font>', chk_st)
+            row_bg = WHITE
+        elif val is False:
+            status_txt = Paragraph('<font color="#c62828"><b>&#10007; AVVIK</b></font>', chk_st)
+            row_bg = RED_BG
+            avvik_items.append(item)
+        else:
+            status_txt = Paragraph('<font color="#546e7a">&#8212; N/A</font>', chk_st)
+            row_bg = WHITE
+
+        critical_txt = Paragraph('<b>JA</b>' if item['critical'] else 'Nei',
+                                  style('CR', fontSize=8, fontName='Helvetica-Bold' if item['critical'] else 'Helvetica',
+                                        textColor=RED if item['critical'] else MUTED))
+        chk_rows.append([status_txt, Paragraph(item['text'], chk_st), critical_txt])
+
+    chk_t = Table(chk_rows, colWidths=[22*mm, 132*mm, 20*mm])
+    row_styles = [
+        ('BACKGROUND', (0,0), (-1,0), MID),
+        ('GRID', (0,0), (-1,-1), 0.4, BORDER),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('LEFTPADDING', (0,0), (-1,-1), 7),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('ALIGN', (2,0), (2,-1), 'CENTER'),
+    ]
+    # Color avvik rows red
+    for i, item in enumerate(template['items'], start=1):
+        if checklist.get(item['id']) is False:
+            row_styles.append(('BACKGROUND', (0,i), (-1,i), RED_BG))
+    chk_t.setStyle(TableStyle(row_styles))
+    story.append(chk_t)
+    story.append(Spacer(1, 4*mm))
+
+    # ── AVVIK SECTION ──
+    if avvik_items:
+        story.append(section_header('AVVIK — ANSVARLIG OG FRIST FOR UTBEDRING', color=HexColor('#7f0000')))
+        av_header = [
+            Paragraph('<b>Avvik / Sjekkpunkt</b>', style('AH', fontSize=8, fontName='Helvetica-Bold', textColor=WHITE)),
+            Paragraph('<b>Ansvarlig</b>', style('AH', fontSize=8, fontName='Helvetica-Bold', textColor=WHITE)),
+            Paragraph('<b>Frist for utbedring</b>', style('AH', fontSize=8, fontName='Helvetica-Bold', textColor=WHITE)),
         ]
-        
-        hazard_table = Table(hazard_data, colWidths=[35*mm, 125*mm])
-        hazard_table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-            ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#fed7d7')),
-            ('BACKGROUND', (0, 0), (-1, -1), HexColor('#fff5f5')),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 6),
+        av_rows = [av_header]
+        avvik_details = data.get('avvik_details') or {}
+        if not isinstance(avvik_details, dict): avvik_details = {}
+        for item in avvik_items:
+            detail = avvik_details.get(item['id']) or {}
+            if not isinstance(detail, dict): detail = {}
+            ansvarlig = detail.get('ansvarlig') or 'Ikke angitt'
+            frist = detail.get('frist') or 'Ikke angitt'
+            av_rows.append([
+                Paragraph(item['text'], style('AV', fontSize=8, fontName='Helvetica', textColor=DARK)),
+                Paragraph(ansvarlig, style('AV', fontSize=8, fontName='Helvetica',
+                          textColor=DARK if ansvarlig != 'Ikke angitt' else MUTED)),
+                Paragraph(frist, style('AV', fontSize=8, fontName='Helvetica',
+                          textColor=DARK if frist != 'Ikke angitt' else MUTED)),
+            ])
+        av_t = Table(av_rows, colWidths=[90*mm, 45*mm, 39*mm])
+        av_t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), HexColor('#7f0000')),
+            ('GRID', (0,0), (-1,-1), 0.4, BORDER),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [WHITE, RED_BG]),
+            ('TOPPADDING', (0,0), (-1,-1), 5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ('LEFTPADDING', (0,0), (-1,-1), 7),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ]))
-        story.append(hazard_table)
-        story.append(Spacer(1, 8*mm))
-    
-    # ===== NOTES =====
-    notes = data.get('notes', '')
+        story.append(av_t)
+        story.append(Spacer(1, 4*mm))
+
+    # ── HAZARD DETAILS ──
+    if report_type == 'fare' and hazard:
+        sev = (hazard.get('severity') or '').lower()
+        sev_fg, sev_bg = SEV_COLORS.get(sev, (RED, RED_BG))
+        story.append(section_header('FAREDETALJER', color=HexColor('#7f0000')))
+        haz_rows = [
+            [Paragraph('Type fare:', cell_key),      Paragraph(hazard.get('type','Ikke spesifisert'), cell_val)],
+            [Paragraph('Alvorlighetsgrad:', cell_key), Paragraph(f'<b>{hazard.get("severity","Ikke vurdert").upper()}</b>',
+                                                                   style('SEV', fontSize=8.5, fontName='Helvetica-Bold', textColor=sev_fg))],
+            [Paragraph('Beskrivelse:', cell_key),     Paragraph(hazard.get('description','Ingen beskrivelse'), cell_val)],
+            [Paragraph('Umiddelbare tiltak:', cell_key), Paragraph(hazard.get('immediate_action','Ingen tiltak'), cell_val)],
+        ]
+        haz_t = Table(haz_rows, colWidths=[35*mm, 139*mm])
+        haz_t.setStyle(TableStyle([
+            ('GRID', (0,0), (-1,-1), 0.4, BORDER),
+            ('BACKGROUND', (0,0), (-1,-1), HexColor('#fff5f5')),
+            ('BACKGROUND', (0,1), (-1,1), sev_bg),
+            ('TOPPADDING', (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('LEFTPADDING', (0,0), (-1,-1), 7),
+            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
+        ]))
+        story.append(haz_t)
+        story.append(Spacer(1, 4*mm))
+
+    # ── NOTES ──
     if notes:
-        story.append(Paragraph("KOMMENTARER", header_style))
-        story.append(Paragraph(notes, normal_style))
-        story.append(Spacer(1, 5*mm))
-    
-    # ===== VOICE TRANSCRIPTION =====
-    transcription = data.get('transcription', '')
-    if transcription:
-        story.append(Paragraph("LYDOPPTAK (TRANSKRIBERT)", header_style))
-        story.append(Paragraph(transcription, normal_style))
-        story.append(Spacer(1, 5*mm))
-    
-    # ===== PHOTOS =====
+        story.append(section_header('KOMMENTARER'))
+        story.append(Spacer(1, 2*mm))
+        story.append(Paragraph(notes, style('N', fontSize=9, fontName='Helvetica', textColor=DARK, leftIndent=8)))
+        story.append(Spacer(1, 4*mm))
+
+    # ── PHOTOS ──
     if photos:
         story.append(PageBreak())
-        story.append(Paragraph("FOTODOKUMENTASJON", header_style))
+        story.append(section_header('FOTODOKUMENTASJON'))
         story.append(Spacer(1, 3*mm))
-        
-        photo_labels = ['Oversikt', 'Detalj 1', 'Detalj 2', 'Avvik/Fare'] if report_type == 'fare' else ['Før', 'Under', 'Detalj', 'Etter']
-        
-        # Create 2x2 grid
+        photo_labels = ['Oversikt', 'Detalj 1', 'Detalj 2', 'Avvik/Fare'] if report_type == 'fare' else ['Bilde 1', 'Bilde 2', 'Bilde 3', 'Bilde 4']
+        photo_row = []
         photo_table_data = []
-        row = []
-        
         for i, photo_data in enumerate(photos[:4]):
             try:
-                # Decode and resize photo
                 img_data = base64.b64decode(photo_data.split(',')[1] if ',' in photo_data else photo_data)
                 img = PILImage.open(BytesIO(img_data))
-                
-                # Resize for PDF
                 img.thumbnail((400, 400), PILImage.Resampling.LANCZOS)
-                
-                # Save to buffer
-                img_buffer = BytesIO()
-                img.save(img_buffer, format='JPEG', quality=85)
-                img_buffer.seek(0)
-                
-                # Create reportlab image
-                rl_img = Image(img_buffer, width=75*mm, height=56*mm)
-                
-                label = photo_labels[i] if i < len(photo_labels) else f'Bilde {i+1}'
-                row.append(rl_img)
-                
+                buf = BytesIO()
+                img.save(buf, format='JPEG', quality=85)
+                buf.seek(0)
+                rl_img = Image(buf, width=78*mm, height=58*mm)
+                photo_row.append(rl_img)
             except Exception as e:
-                logger.error(f"Error processing photo {i}: {e}")
-                row.append([Paragraph(f"Bilde {i+1} - Feil", small_style)])
-            
-            if len(row) == 2:
-                photo_table_data.append(row)
-                row = []
-        
-        if row:  # Add remaining photos
-            while len(row) < 2:
-                row.append([Paragraph('', small_style)])
-            photo_table_data.append(row)
-        
+                logger.error(f"Photo {i} error: {e}")
+                photo_row.append(Paragraph(f'Bilde {i+1} - feil', small_st))
+            if len(photo_row) == 2:
+                photo_table_data.append(photo_row)
+                photo_row = []
+        if photo_row:
+            while len(photo_row) < 2:
+                photo_row.append(Paragraph('', small_st))
+            photo_table_data.append(photo_row)
         if photo_table_data:
-            photo_table = Table(photo_table_data, colWidths=[80*mm, 80*mm])
-            photo_table.setStyle(TableStyle([
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
-                ('TOPPADDING', (0, 0), (-1, -1), 10),
-                ('BOX', (0, 0), (-1, -1), 0.5, HexColor('#e2e8f0')),
-                ('INNERGRID', (0, 0), (-1, -1), 0.5, HexColor('#e2e8f0')),
+            pt = Table(photo_table_data, colWidths=[83*mm, 83*mm])
+            pt.setStyle(TableStyle([
+                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('GRID', (0,0), (-1,-1), 0.4, BORDER),
+                ('TOPPADDING', (0,0), (-1,-1), 6),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
             ]))
-            story.append(photo_table)
-    
-    # ===== APPROVAL SECTION =====
-    story.append(Spacer(1, 10*mm))
-    story.append(Paragraph("GODKJENNING", header_style))
-    
-    approval = data.get('approval') or {}
-    approval_status = approval.get('status', 'pending')
-    
-    if approval_status == 'approved':
-        approval_text = f"✓ GODKJENT av {approval.get('approved_by', 'Ukjent')} den {approval.get('approved_at', 'Ukjent dato')}"
-        approval_color = HexColor('#38a169')
-    elif approval_status == 'rejected':
-        approval_text = f"✗ AVVIST av {approval.get('approved_by', 'Ukjent')}: {approval.get('rejection_reason', 'Ingen grunn oppgitt')}"
-        approval_color = HexColor('#e53e3e')
+            story.append(pt)
+        story.append(Spacer(1, 4*mm))
+
+    # ── APPROVAL ──
+    story.append(section_header('GODKJENNING'))
+    appr_status = approval.get('status', 'pending')
+    if appr_status == 'approved':
+        appr_txt = f'<font color="#2e7d32"><b>Godkjent av {approval.get("approved_by","Ukjent")}</b></font>'
+    elif appr_status == 'rejected':
+        appr_txt = f'<font color="#c62828"><b>Avvist av {approval.get("approved_by","Ukjent")}: {approval.get("rejection_reason","")}</b></font>'
     else:
-        approval_text = "⏳ VENTER PÅ GODKJENNING"
-        approval_color = HexColor('#dd6b20')
-    
-    story.append(Paragraph(approval_text, ParagraphStyle(
-        'ApprovalStyle',
-        parent=normal_style,
-        fontSize=11,
-        textColor=approval_color,
-        spaceBefore=6
-    )))
-    
-    # ===== FOOTER =====
-    story.append(Spacer(1, 15*mm))
-    
-    # Tamper-proof hash
-    report_hash = data.get('integrity_hash', 'N/A')
-    
-    footer_text = f"""
-    <font size="7" color="#718096">
-    ─────────────────────────────────────────────────────────────────────<br/>
-    Dette dokumentet er generert automatisk av SHA Pipeline.<br/>
-    Rapport-ID: {data.get('report_id', 'N/A')}<br/>
-    Integritets-hash: {report_hash[:16]}...<br/>
-    Generert: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}<br/>
-    <br/>
-    SHA-dokumentasjon i henhold til Byggherreforskriften og Arbeidsmiljøloven.<br/>
-    Dokumentet skal oppbevares i minimum 5 år etter prosjektets avslutning.
-    </font>
-    """
-    story.append(Paragraph(footer_text, normal_style))
-    
-    # Build PDF
+        appr_txt = '<font color="#e65100"><b>Venter pa godkjenning av leder</b></font>'
+
+    appr_rows = [
+        [Paragraph('Status', cell_key), Paragraph(appr_txt, style('AP', fontSize=9, fontName='Helvetica'))],
+        [Paragraph('Leder', cell_key),  Paragraph(approval.get('approved_by', '—'), cell_val)],
+        [Paragraph('Dato', cell_key),   Paragraph(approval.get('approved_at', '—'), cell_val)],
+        [Paragraph('Merknad', cell_key),Paragraph(approval.get('rejection_reason', '—'), cell_val)],
+    ]
+    appr_t = Table(appr_rows, colWidths=[30*mm, 144*mm])
+    appr_t.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.4, BORDER),
+        ('BACKGROUND', (0,0), (0,-1), LIGHT_BG),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('LEFTPADDING', (0,0), (-1,-1), 7),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ]))
+    story.append(appr_t)
+
+    # ── FOOTER ──
+    story.append(Spacer(1, 6*mm))
+    integrity_hash = data.get('integrity_hash', 'N/A')
+    footer_lines = [
+        f'Generert av Vernevakt | Rapport-ID: {report_id} | Integritets-hash: {integrity_hash[:16]}... | Generert: {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}',
+        'SHA-dokumentasjon i henhold til Byggherreforskriften og Arbeidsmiljoeloven. Dokumentet skal oppbevares i minimum 5 ar etter prosjektets avslutning.',
+    ]
+    for line in footer_lines:
+        story.append(Paragraph(line, foot_st))
+
     doc.build(story)
-    logger.info(f"[PDF] Generated SHA report: {output_path}")
+    logger.info(f"[PDF] Generated Vernevakt report: {output_path}")
     return output_path
 
-# ============================================
-# EMAIL FUNCTIONS
-# ============================================
+
 def send_email(to_email, subject, body, attachments=None):
     """Send email with attachments"""
     if not CONFIG['smtp']['user'] or not CONFIG['smtp']['password']:
@@ -602,6 +684,13 @@ class SHAHandler(BaseHTTPRequestHandler):
         elif path == '/api/reports':
             # Return report history (last 200, newest first)
             self._send_response(200, {'reports': list(reversed(REPORTS[-200:]))})
+
+        elif path.startswith('/approve'):
+            # Manager approval page - served as HTML
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+            report_id = params.get('id', [''])[0]
+            self._serve_approval_page(report_id)
         
         else:
             self._send_response(404, {'error': 'Not found'})
@@ -613,10 +702,32 @@ class SHAHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length)
         
+        # Try JSON first, then form-encoded (from approval page)
+        content_type = self.headers.get('Content-Type', '')
         try:
-            data = json.loads(body.decode('utf-8'))
-        except json.JSONDecodeError:
-            self._send_response(400, {'error': 'Invalid JSON'})
+            if 'application/x-www-form-urlencoded' in content_type:
+                from urllib.parse import unquote_plus
+                pairs = body.decode('utf-8').split('&')
+                data = {}
+                for pair in pairs:
+                    if '=' in pair:
+                        k, v = pair.split('=', 1)
+                        data[unquote_plus(k)] = unquote_plus(v)
+                # Convert form data to approve API format
+                if 'manager_name' in data:
+                    data = {
+                        'report_id': data.get('report_id', ''),
+                        'action': data.get('action', 'approve'),
+                        'manager': {
+                            'name': data.get('manager_name', ''),
+                            'hms_kort': data.get('manager_hms', ''),
+                        },
+                        'rejection_reason': data.get('rejection_reason', ''),
+                    }
+            else:
+                data = json.loads(body.decode('utf-8'))
+        except Exception:
+            self._send_response(400, {'error': 'Invalid request'})
             return
         
         if path == '/api/submit':
@@ -698,21 +809,27 @@ class SHAHandler(BaseHTTPRequestHandler):
             
             subject = f"SHA-Rapport: {template['name']} - {site.get('name', 'Ukjent')} - {timestamp[:8]}"
             
+            backend_url = f"https://vernevakt-backend.onrender.com"
+            approval_link = f"{backend_url}/approve?id={report_id}"
             body = f"""
-Ny SHA-rapport mottatt.
+Ny Vernevakt-rapport mottatt og klar for godkjenning.
 
 Byggeplass: {site.get('name', 'Ikke oppgitt')}
 Adresse: {site.get('address', 'Ikke oppgitt')}
-Utført av: {worker.get('name', 'Ukjent')} (HMS-kort: {worker.get('hms_kort', 'Ukjent')})
+Utfort av: {worker.get('name', 'Ukjent')} (HMS-kort: {worker.get('hms_kort', 'Ukjent')})
 Type: {template['name']}
 Tidspunkt: {data.get('timestamp', 'Ukjent')}
 
-Status: VENTER PÅ GODKJENNING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GODKJENN ELLER AVVIS RAPPORTEN:
+{approval_link}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+Klikk lenken ovenfor for a apne godkjenningssiden.
 Se vedlagt PDF for fullstendig rapport.
 
 ---
-SHA Pipeline - Automatisk generert rapport
+Vernevakt - Automatisk generert rapport
 Rapport-ID: {report_id}
 """
             
@@ -980,6 +1097,104 @@ Rapport-ID: {report_id}
             logger.error(f"[LOGIN] Error: {e}")
             self._send_response(500, {'error': str(e)})
     
+    def _serve_approval_page(self, report_id):
+        """Serve a simple HTML approval page for managers"""
+        # Find the report
+        report = None
+        for r in REPORTS:
+            if r.get('report_id') == report_id:
+                report = r
+                break
+
+        if not report:
+            html = '<html><body><h2>Rapport ikke funnet.</h2></body></html>'
+        else:
+            status = report.get('status', 'pending')
+            site = report.get('site_name', 'Ukjent')
+            worker = report.get('worker_name', 'Ukjent')
+            rtype = report.get('report_type', '')
+            ts = report.get('timestamp', '')[:10]
+
+            if status == 'approved':
+                status_html = f'<div class="approved">&#10003; Godkjent av {report.get("approved_by","")}</div>'
+                buttons = ''
+            elif status == 'rejected':
+                status_html = f'<div class="rejected">&#10007; Avvist av {report.get("approved_by","")}</div>'
+                buttons = ''
+            else:
+                status_html = '<div class="pending">&#9203; Venter pa godkjenning</div>'
+                buttons = f'''
+                <form method="POST" action="/api/approve" style="margin-top:24px">
+                  <input type="hidden" name="report_id" value="{report_id}">
+                  <div style="margin-bottom:12px">
+                    <label style="font-weight:600">Leder navn:</label><br>
+                    <input type="text" name="manager_name" required
+                           style="width:100%;padding:8px;margin-top:4px;border:1px solid #ccc;border-radius:4px">
+                  </div>
+                  <div style="margin-bottom:12px">
+                    <label style="font-weight:600">HMS-kort:</label><br>
+                    <input type="text" name="manager_hms"
+                           style="width:100%;padding:8px;margin-top:4px;border:1px solid #ccc;border-radius:4px">
+                  </div>
+                  <div style="margin-bottom:16px">
+                    <label style="font-weight:600">Merknad (valgfritt):</label><br>
+                    <textarea name="rejection_reason" rows="3"
+                              style="width:100%;padding:8px;margin-top:4px;border:1px solid #ccc;border-radius:4px"></textarea>
+                  </div>
+                  <button type="submit" name="action" value="approve"
+                          style="background:#2e7d32;color:white;padding:12px 32px;border:none;border-radius:6px;font-size:16px;cursor:pointer;margin-right:12px">
+                    &#10003; Godkjenn rapport
+                  </button>
+                  <button type="submit" name="action" value="reject"
+                          style="background:#c62828;color:white;padding:12px 32px;border:none;border-radius:6px;font-size:16px;cursor:pointer">
+                    &#10007; Avvis rapport
+                  </button>
+                </form>'''
+
+            html = f'''<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vernevakt — Godkjenning</title>
+  <style>
+    body {{ font-family: -apple-system, sans-serif; background:#f4f6f8; margin:0; padding:20px; }}
+    .card {{ background:white; max-width:560px; margin:40px auto; border-radius:10px;
+             box-shadow:0 2px 12px rgba(0,0,0,0.1); overflow:hidden; }}
+    .header {{ background:#111; color:#f59e0b; padding:20px 24px; font-size:22px; font-weight:800; }}
+    .header span {{ color:#aaa; font-size:13px; font-weight:400; display:block; margin-top:2px; }}
+    .body {{ padding:24px; }}
+    .row {{ display:flex; justify-content:space-between; padding:8px 0;
+            border-bottom:1px solid #f0f0f0; font-size:14px; }}
+    .row .label {{ color:#888; }}
+    .row .val {{ font-weight:600; }}
+    .pending {{ color:#e65100; font-weight:700; font-size:15px; margin-top:12px; }}
+    .approved {{ color:#2e7d32; font-weight:700; font-size:15px; margin-top:12px; }}
+    .rejected {{ color:#c62828; font-weight:700; font-size:15px; margin-top:12px; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">VERNEVAKT <span>Rapport godkjenning</span></div>
+    <div class="body">
+      <div class="row"><span class="label">Rapport-ID</span><span class="val">{report_id[:8]}</span></div>
+      <div class="row"><span class="label">Byggeplass</span><span class="val">{site}</span></div>
+      <div class="row"><span class="label">Innrapportert av</span><span class="val">{worker}</span></div>
+      <div class="row"><span class="label">Type</span><span class="val">{rtype}</span></div>
+      <div class="row"><span class="label">Dato</span><span class="val">{ts}</span></div>
+      {status_html}
+      {buttons}
+    </div>
+  </div>
+</body>
+</html>'''
+
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(html.encode('utf-8'))
+
     def log_message(self, format, *args):
         logger.info(f"[HTTP] {args[0]}")
 
