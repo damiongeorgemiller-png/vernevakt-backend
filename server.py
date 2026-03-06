@@ -64,11 +64,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================
-# IN-MEMORY STORES (replace with DB in production)
+# AUDIT LOG - Immutable Record
 # ============================================
-AUDIT_LOG = []
-REPORT_STORE = {}   # report_id -> report data + status
-WORKER_STORE = {}   # hms_kort -> worker profile
+AUDIT_LOG = []  # In production, this would be a database
+USERS = {}      # username -> {password_hash, name, hms_kort, role, created_at}
+REPORTS = []    # list of submitted reports (in-memory, resets on restart)
 
 def log_audit(action, user_id, details, record_id=None):
     """Create immutable audit entry with tamper-proof signature"""
@@ -114,40 +114,34 @@ def verify_photo_integrity(photo_data, metadata):
 # VERNERUNDE TEMPLATES (Safety Round Checklists)
 # ============================================
 VERNERUNDE_TEMPLATES = {
-    'daglig': {  # Daily inspection — matches Arbeidstilsynet/RVO minimumskrav
+    'daglig': {  # Daily inspection
         'name': 'Daglig vernerunde',
         'items': [
-            {'id': 'ppe',             'text': 'Alt personell bruker påkrevd verneutstyr (hjelm, vest, sko)',     'critical': True},
-            {'id': 'barriers',        'text': 'Sperringer og sikring er på plass rundt fareområder',             'critical': True},
-            {'id': 'access',          'text': 'Adkomstveier er ryddige og sikre',                                'critical': False},
-            {'id': 'fall_protection', 'text': 'Fallsikring er på plass ved arbeid i høyden (stillas, rekkverk)','critical': True},
-            {'id': 'electrical',      'text': 'Elektriske installasjoner er sikret og jordet',                   'critical': True},
-            {'id': 'equipment',       'text': 'Utstyr og maskiner er kontrollert og i forsvarlig stand',         'critical': True},
-            {'id': 'fire',            'text': 'Brannsikring: slukker tilgjengelig, ingen brannfarlig lagring',   'critical': True},
-            {'id': 'emergency_exit',  'text': 'Nødutganger er merket og frie for hindringer',                   'critical': True},
-            {'id': 'first_aid',       'text': 'Førstehjelpsutstyr er tilgjengelig og komplett',                  'critical': False},
-            {'id': 'housekeeping',    'text': 'Arbeidsplassen er ryddig og avfall håndtert korrekt',             'critical': False},
-            {'id': 'signage',         'text': 'Skilting og sikkerhetsoppslag er synlige',                        'critical': False},
-            {'id': 'unauthorized',    'text': 'Uvedkommende er hindret adgang til byggeplassen',                 'critical': True},
+            {'id': 'ppe', 'text': 'Alt personell bruker påkrevd verneutstyr (hjelm, vest, sko)', 'critical': True},
+            {'id': 'barriers', 'text': 'Sperringer og sikring er på plass', 'critical': True},
+            {'id': 'access', 'text': 'Adkomstveier er ryddige og sikre', 'critical': False},
+            {'id': 'equipment', 'text': 'Utstyr og maskiner er i forsvarlig stand', 'critical': True},
+            {'id': 'electrical', 'text': 'Elektriske installasjoner er sikret', 'critical': True},
+            {'id': 'fall_protection', 'text': 'Fallsikring er på plass ved arbeid i høyden', 'critical': True},
+            {'id': 'housekeeping', 'text': 'Arbeidsplassen er ryddig', 'critical': False},
+            {'id': 'fire', 'text': 'Brannslukningsutstyr er tilgjengelig', 'critical': True},
+            {'id': 'first_aid', 'text': 'Førstehjelpsutstyr er tilgjengelig', 'critical': False},
+            {'id': 'signage', 'text': 'Skilting og varsler er synlige', 'critical': False},
         ]
     },
-    'ukentlig': {  # Weekly inspection — matches Arbeidstilsynet/RVO minimumskrav
+    'ukentlig': {  # Weekly inspection
         'name': 'Ukentlig vernerunde',
         'items': [
-            {'id': 'ppe',             'text': 'Alt personell bruker påkrevd verneutstyr',                        'critical': True},
-            {'id': 'barriers',        'text': 'Sperringer og sikring er på plass rundt alle fareområder',        'critical': True},
-            {'id': 'scaffolding',     'text': 'Stillaser er kontrollert, godkjent og merket',                   'critical': True},
-            {'id': 'lifting',         'text': 'Løfteutstyr og kraner er sertifisert og kontrollert',            'critical': True},
-            {'id': 'fall_protection', 'text': 'Fallsikring gjennomgått: rekkverk, sikkerhetsnett, seler',       'critical': True},
-            {'id': 'electrical',      'text': 'Elektriske anlegg og jordingspunkter er kontrollert',             'critical': True},
-            {'id': 'chemicals',       'text': 'Kjemikalier forsvarlig lagret med oppdaterte sikkerhetsdatablad','critical': True},
-            {'id': 'waste',           'text': 'Avfallshåndtering i henhold til godkjent avfallsplan',           'critical': False},
-            {'id': 'emergency',       'text': 'Nødutganger og rømningsveier er merket og frie',                 'critical': True},
-            {'id': 'fire_weekly',     'text': 'Brannsikring: slukker, varmt arbeid-tillatelser kontrollert',    'critical': True},
-            {'id': 'documentation',   'text': 'SHA-dokumentasjon og skjema 504 er oppdatert',                   'critical': True},
-            {'id': 'hms_kort',        'text': 'Alle arbeidere har gyldig HMS-kort synlig',                      'critical': True},
-            {'id': 'subcontractors',  'text': 'Underentreprenører følger SHA-plan og er registrert',            'critical': True},
-            {'id': 'toolbox_talk',    'text': 'Sikkerhetsmøte (toolbox talk) er gjennomført denne uken',        'critical': False},
+            {'id': 'ppe', 'text': 'Alt personell bruker påkrevd verneutstyr', 'critical': True},
+            {'id': 'barriers', 'text': 'Sperringer og sikring er på plass', 'critical': True},
+            {'id': 'scaffolding', 'text': 'Stillaser er kontrollert og godkjent', 'critical': True},
+            {'id': 'lifting', 'text': 'Løfteutstyr er sertifisert og i orden', 'critical': True},
+            {'id': 'chemicals', 'text': 'Kjemikalier er forsvarlig lagret med sikkerhetsdatablad', 'critical': True},
+            {'id': 'waste', 'text': 'Avfallshåndtering er i henhold til plan', 'critical': False},
+            {'id': 'emergency', 'text': 'Nødutganger er merket og frie', 'critical': True},
+            {'id': 'documentation', 'text': 'SHA-dokumentasjon er oppdatert', 'critical': False},
+            {'id': 'training', 'text': 'Alle har gyldig HMS-kort', 'critical': True},
+            {'id': 'subcontractors', 'text': 'Underentreprenører følger SHA-plan', 'critical': True},
         ]
     },
     'fare': {  # Hazard report
@@ -581,7 +575,7 @@ class SHAHandler(BaseHTTPRequestHandler):
         elif path == '/api/status':
             self._send_response(200, {
                 'status': 'ok',
-                'version': '2.0.0',
+                'version': '1.0.0',
                 'service': 'SHA Pipeline',
                 'smtp_configured': bool(CONFIG['smtp']['user'] and CONFIG['smtp']['password'])
             })
@@ -599,39 +593,11 @@ class SHAHandler(BaseHTTPRequestHandler):
         elif path == '/api/audit':
             # Return audit log (would require auth in production)
             self._send_response(200, {'audit_log': AUDIT_LOG[-100:]})  # Last 100 entries
-
+        
         elif path == '/api/reports':
-            # Return report history - sorted newest first
-            reports = sorted(REPORT_STORE.values(), key=lambda r: r.get('timestamp',''), reverse=True)
-            # Strip photos to keep response small
-            summary = []
-            for r in reports[:50]:
-                summary.append({
-                    'report_id': r.get('report_id'),
-                    'report_type': r.get('report_type'),
-                    'timestamp': r.get('timestamp'),
-                    'site': r.get('site', {}).get('name', ''),
-                    'worker': r.get('worker', {}).get('name', ''),
-                    'approval_status': r.get('approval', {}).get('status', 'pending'),
-                    'integrity_hash': r.get('integrity_hash', '')[:16],
-                })
-            self._send_response(200, {'reports': summary, 'total': len(REPORT_STORE)})
-
-        elif path.startswith('/api/reports/'):
-            # Return single report by ID
-            report_id = path.split('/')[-1]
-            report = REPORT_STORE.get(report_id)
-            if report:
-                # Return without photos (too large)
-                r = {k: v for k, v in report.items() if k != 'photos'}
-                self._send_response(200, {'report': r})
-            else:
-                self._send_response(404, {'error': 'Report not found'})
-
-        elif path == '/api/workers':
-            # Return worker list for manager view
-            self._send_response(200, {'workers': list(WORKER_STORE.values())})
-
+            # Return report history (last 200, newest first)
+            self._send_response(200, {'reports': list(reversed(REPORTS[-200:]))})
+        
         else:
             self._send_response(404, {'error': 'Not found'})
     
@@ -659,79 +625,13 @@ class SHAHandler(BaseHTTPRequestHandler):
         
         elif path == '/api/login':
             self._handle_login(data)
-
+        
         elif path == '/api/register':
             self._handle_register(data)
-
+        
         else:
             self._send_response(404, {'error': 'Not found'})
     
-    def _handle_login(self, data):
-        """Worker/manager login via HMS-kort + PIN"""
-        hms_kort = data.get('hms_kort', '').strip()
-        pin = data.get('pin', '').strip()
-
-        if not hms_kort:
-            self._send_response(400, {'error': 'HMS-kort nummer mangler'})
-            return
-
-        worker = WORKER_STORE.get(hms_kort)
-        if not worker:
-            self._send_response(401, {'error': 'Ingen bruker funnet med dette HMS-kort nummeret'})
-            return
-
-        # Verify PIN
-        pin_hash = hashlib.sha256(pin.encode()).hexdigest()
-        if worker.get('pin_hash') != pin_hash:
-            self._send_response(401, {'error': 'Feil PIN-kode'})
-            return
-
-        log_audit('WORKER_LOGIN', hms_kort, f"Login: {worker.get('name')}")
-        self._send_response(200, {
-            'success': True,
-            'worker': {
-                'name': worker['name'],
-                'hms_kort': worker['hms_kort'],
-                'role': worker.get('role', 'worker'),
-                'company': worker.get('company', ''),
-                'hms_kort_expiry': worker.get('hms_kort_expiry', ''),
-            }
-        })
-
-    def _handle_register(self, data):
-        """Register new worker"""
-        hms_kort = data.get('hms_kort', '').strip()
-        name = data.get('name', '').strip()
-        pin = data.get('pin', '').strip()
-        role = data.get('role', 'worker')  # 'worker' or 'manager'
-
-        if not hms_kort or not name or not pin:
-            self._send_response(400, {'error': 'Navn, HMS-kort og PIN er påkrevd'})
-            return
-
-        if len(pin) < 4:
-            self._send_response(400, {'error': 'PIN må være minst 4 siffer'})
-            return
-
-        if hms_kort in WORKER_STORE:
-            self._send_response(409, {'error': 'HMS-kort allerede registrert'})
-            return
-
-        pin_hash = hashlib.sha256(pin.encode()).hexdigest()
-        worker = {
-            'hms_kort': hms_kort,
-            'name': name,
-            'role': role,
-            'company': data.get('company', ''),
-            'hms_kort_expiry': data.get('hms_kort_expiry', ''),
-            'pin_hash': pin_hash,
-            'registered_at': datetime.now(timezone.utc).isoformat(),
-        }
-        WORKER_STORE[hms_kort] = worker
-        log_audit('WORKER_REGISTERED', hms_kort, f"New {role}: {name}")
-
-        self._send_response(200, {'success': True, 'message': f'Bruker {name} registrert'})
-
     def _handle_submit(self, data):
         """Handle SHA report submission"""
         logger.info("[JOB] Received SHA report submission")
@@ -740,15 +640,26 @@ class SHAHandler(BaseHTTPRequestHandler):
             # Generate report ID
             report_id = str(uuid.uuid4())
             data['report_id'] = report_id
-            data['approval'] = {'status': 'pending'}
             
             # Create integrity hash
-            data_str = json.dumps({k: v for k, v in data.items() if k != 'photos'}, sort_keys=True)
+            data_str = json.dumps(data, sort_keys=True)
             integrity_hash = hashlib.sha256(data_str.encode()).hexdigest()
             data['integrity_hash'] = integrity_hash
             
-            # Store report
-            REPORT_STORE[report_id] = data
+            # Store report in memory (for history)
+            report_type = data.get('report_type', 'daglig')
+            worker = data.get('worker', {})
+            site = data.get('site', {})
+            REPORTS.append({
+                'report_id': report_id,
+                'report_type': report_type,
+                'status': 'pending',
+                'timestamp': data.get('timestamp', datetime.now(timezone.utc).isoformat()),
+                'site_name': site.get('name', ''),
+                'worker_name': worker.get('name', ''),
+                'worker_hms': worker.get('hms_kort', ''),
+                'integrity_hash': integrity_hash,
+            })
             
             # Log audit entry
             worker = data.get('worker', {})
@@ -783,23 +694,27 @@ class SHAHandler(BaseHTTPRequestHandler):
             subject = f"SHA-Rapport: {template['name']} - {site.get('name', 'Ukjent')} - {timestamp[:8]}"
             
             body = f"""
-Ny SHA-rapport mottatt — VENTER PÅ GODKJENNING
+Ny SHA-rapport mottatt.
 
 Byggeplass: {site.get('name', 'Ikke oppgitt')}
 Adresse: {site.get('address', 'Ikke oppgitt')}
 Utført av: {worker.get('name', 'Ukjent')} (HMS-kort: {worker.get('hms_kort', 'Ukjent')})
 Type: {template['name']}
 Tidspunkt: {data.get('timestamp', 'Ukjent')}
-Rapport-ID: {report_id}
 
-For å godkjenne eller avvise rapporten, bruk leder-panelet i appen.
+Status: VENTER PÅ GODKJENNING
+
+Se vedlagt PDF for fullstendig rapport.
 
 ---
 SHA Pipeline - Automatisk generert rapport
+Rapport-ID: {report_id}
 """
             
+            # Send email
             attachments = [(pdf_filename, pdf_data)]
             
+            # Attach audio if present
             audio = data.get('audio')
             if audio:
                 try:
@@ -810,6 +725,7 @@ SHA Pipeline - Automatisk generert rapport
             
             email_sent = send_email(office_email, subject, body, attachments)
             
+            # Log email status
             log_audit(
                 action='REPORT_EMAILED' if email_sent else 'EMAIL_FAILED',
                 user_id='system',
@@ -817,6 +733,7 @@ SHA Pipeline - Automatisk generert rapport
                 record_id=report_id
             )
             
+            # Cleanup
             try:
                 os.remove(pdf_path)
             except:
@@ -849,6 +766,20 @@ SHA Pipeline - Automatisk generert rapport
             data_str = json.dumps(data, sort_keys=True)
             integrity_hash = hashlib.sha256(data_str.encode()).hexdigest()
             data['integrity_hash'] = integrity_hash
+            
+            # Store hazard report in memory (for history)
+            worker = data.get('worker', {})
+            site = data.get('site', {})
+            REPORTS.append({
+                'report_id': report_id,
+                'report_type': 'fare',
+                'status': 'pending',
+                'timestamp': data.get('timestamp', datetime.now(timezone.utc).isoformat()),
+                'site_name': site.get('name', ''),
+                'worker_name': worker.get('name', ''),
+                'worker_hms': worker.get('hms_kort', ''),
+                'integrity_hash': integrity_hash,
+            })
             
             # Log audit entry (critical)
             worker = data.get('worker', {})
@@ -899,60 +830,174 @@ SHA Pipeline - Automatisk generert rapport
             self._send_response(500, {'error': str(e)})
     
     def _handle_approve(self, data):
-        """Handle manager approval/rejection - updates stored report"""
+        """Handle manager approval/rejection"""
         logger.info("[APPROVE] Received approval request")
-
+        
         try:
             report_id = data.get('report_id')
             action = data.get('action')  # 'approve' or 'reject'
             manager = data.get('manager', {})
-
+            
             if not report_id or not action:
-                self._send_response(400, {'error': 'Mangler report_id eller action'})
+                self._send_response(400, {'error': 'Missing report_id or action'})
                 return
-
-            report = REPORT_STORE.get(report_id)
-            if not report:
-                self._send_response(404, {'error': 'Rapport ikke funnet'})
-                return
-
-            now = datetime.now(timezone.utc).isoformat()
-            report['approval'] = {
-                'status': 'approved' if action == 'approve' else 'rejected',
-                'approved_by': manager.get('name', 'Ukjent'),
-                'approved_by_hms': manager.get('hms_kort', ''),
-                'approved_at': now,
-                'rejection_reason': data.get('rejection_reason', '') if action == 'reject' else '',
-            }
-
+            
+            # Update report status in memory
+            new_status = 'approved' if action == 'approve' else 'rejected'
+            for r in REPORTS:
+                if r['report_id'] == report_id:
+                    r['status'] = new_status
+                    r['approved_by'] = manager.get('name', 'Ukjent')
+                    r['approved_at'] = datetime.now(timezone.utc).isoformat()
+                    if action == 'reject':
+                        r['rejection_reason'] = data.get('rejection_reason', '')
+                    break
+            
+            # Log audit entry
             log_audit(
                 action=f'REPORT_{action.upper()}D',
                 user_id=manager.get('hms_kort', 'unknown'),
                 details=f"By: {manager.get('name', 'Unknown')}",
                 record_id=report_id
             )
-
-            # Send confirmation email
-            site = report.get('site', {})
-            office_email = site.get('office_email') or CONFIG['default_office_email']
-            if office_email:
-                if action == 'approve':
-                    subject = f"✓ Rapport godkjent - {site.get('name', '')}"
-                    body = f"Rapport {report_id[:8]} er godkjent av {manager.get('name', 'leder')}."
-                else:
-                    reason = data.get('rejection_reason', 'Ingen grunn oppgitt')
-                    subject = f"✗ Rapport avvist - {site.get('name', '')}"
-                    body = f"Rapport {report_id[:8]} ble avvist.\nÅrsak: {reason}"
-                send_email(office_email, subject, body)
-
+            
             self._send_response(200, {
                 'success': True,
                 'report_id': report_id,
-                'status': 'approved' if action == 'approve' else 'rejected'
+                'status': new_status
             })
-
+            
         except Exception as e:
             logger.error(f"[APPROVE] Error: {e}")
+            self._send_response(500, {'error': str(e)})
+    
+    def _handle_register(self, data):
+        """Register a new worker account using hms_kort + pin"""
+        logger.info("[REGISTER] New registration request")
+        
+        try:
+            hms_kort = (data.get('hms_kort') or '').strip()
+            pin      = (data.get('pin') or '').strip()
+            name     = (data.get('name') or '').strip()
+            company  = (data.get('company') or '').strip()
+            role     = data.get('role', 'worker')  # 'worker' or 'manager'
+            
+            if not hms_kort or not pin or not name:
+                self._send_response(400, {'error': 'Navn, HMS-kort og PIN er påkrevd'})
+                return
+            
+            if len(pin) < 4:
+                self._send_response(400, {'error': 'PIN må være minst 4 siffer'})
+                return
+            
+            if hms_kort in USERS:
+                self._send_response(409, {'error': 'HMS-kort er allerede registrert'})
+                return
+            
+            # Hash PIN
+            pin_hash = hashlib.sha256(
+                (pin + CONFIG['signing_key']).encode()
+            ).hexdigest()
+            
+            USERS[hms_kort] = {
+                'pin_hash': pin_hash,
+                'name': name,
+                'hms_kort': hms_kort,
+                'company': company,
+                'role': role,
+                'created_at': datetime.now(timezone.utc).isoformat(),
+            }
+            
+            log_audit(
+                action='USER_REGISTERED',
+                user_id=hms_kort,
+                details=f"Name: {name}, Role: {role}, HMS-kort: {hms_kort}"
+            )
+            
+            self._send_response(200, {
+                'success': True,
+                'name': name,
+                'hms_kort': hms_kort,
+                'company': company,
+                'role': role,
+            })
+            
+        except Exception as e:
+            logger.error(f"[REGISTER] Error: {e}")
+            self._send_response(500, {'error': str(e)})
+    
+    def _handle_login(self, data):
+        """Authenticate a worker using hms_kort + pin"""
+        logger.info("[LOGIN] Login attempt")
+        
+        try:
+            hms_kort = (data.get('hms_kort') or '').strip()
+            pin      = (data.get('pin') or '').strip()
+            
+            if not hms_kort or not pin:
+                self._send_response(400, {'error': 'HMS-kort og PIN er påkrevd'})
+                return
+            
+            user = USERS.get(hms_kort)
+            
+            if not user:
+                self._send_response(401, {'error': 'Feil HMS-kort eller PIN'})
+                return
+            
+            pin_hash = hashlib.sha256(
+                (pin + CONFIG['signing_key']).encode()
+            ).hexdigest()
+            
+            if pin_hash != user['pin_hash']:
+                self._send_response(401, {'error': 'Feil HMS-kort eller PIN'})
+                return
+            
+            log_audit(
+                action='USER_LOGIN',
+                user_id=hms_kort,
+                details=f"Successful login for {user['name']}"
+            )
+            
+            self._send_response(200, {
+                'success': True,
+                'worker': {
+                    'name': user['name'],
+                    'hms_kort': user['hms_kort'],
+                    'company': user.get('company', ''),
+                    'role': user['role'],
+                }
+            })
+                return
+            
+            pw_hash = hashlib.sha256(
+                (password + CONFIG['signing_key']).encode()
+            ).hexdigest()
+            
+            if pw_hash != user['password_hash']:
+                self._send_response(401, {'error': 'Feil brukernavn eller passord'})
+                return
+            
+            # Create a simple session token
+            token_raw = f"{username}{datetime.now(timezone.utc).isoformat()}{CONFIG['signing_key']}"
+            token = hashlib.sha256(token_raw.encode()).hexdigest()
+            
+            log_audit(
+                action='USER_LOGIN',
+                user_id=username,
+                details=f"Successful login for {user['name']}"
+            )
+            
+            self._send_response(200, {
+                'success': True,
+                'token': token,
+                'username': username,
+                'name': user['name'],
+                'hms_kort': user['hms_kort'],
+                'role': user['role'],
+            })
+            
+        except Exception as e:
+            logger.error(f"[LOGIN] Error: {e}")
             self._send_response(500, {'error': str(e)})
     
     def log_message(self, format, *args):
