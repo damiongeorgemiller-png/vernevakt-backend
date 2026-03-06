@@ -265,7 +265,7 @@ def generate_sha_report(data, photos, output_path):
     story.append(Spacer(1, 8*mm))
     
     # ===== GPS VERIFICATION =====
-    gps = data.get('gps', {})
+    gps = data.get('gps') or {}
     if gps.get('lat') and gps.get('lng'):
         gps_text = f"📍 GPS-verifisert posisjon: {gps['lat']:.6f}, {gps['lng']:.6f}"
         if gps.get('accuracy'):
@@ -276,7 +276,7 @@ def generate_sha_report(data, photos, output_path):
     # ===== CHECKLIST RESULTS =====
     story.append(Paragraph("SJEKKPUNKTER", header_style))
     
-    checklist = data.get('checklist', {})
+    checklist = data.get('checklist') or {}
     checklist_data = [['Status', 'Sjekkpunkt', 'Kritisk']]
     
     for item in template['items']:
@@ -508,9 +508,12 @@ def send_email(to_email, subject, body, attachments=None):
 
 def send_hazard_alert(data, pdf_path):
     """Send immediate hazard alert to site manager"""
-    hazard = data.get('hazard', {})
-    site = data.get('site', {})
-    worker = data.get('worker', {})
+    hazard = data.get('hazard') or {}
+    site = data.get('site') or {}
+    worker = data.get('worker') or {}
+    if not isinstance(hazard, dict): hazard = {}
+    if not isinstance(site, dict): site = {}
+    if not isinstance(worker, dict): worker = {}
     
     subject = f"⚠️ FARE RAPPORTERT - {site.get('name', 'Ukjent byggeplass')}"
     
@@ -549,7 +552,7 @@ SHA Pipeline - Automatisk generert faremelding
         logger.error(f"[HAZARD] Could not attach PDF: {e}")
     
     # Send to hazard alert email (site manager)
-    alert_email = data.get('site', {}).get('manager_email') or CONFIG['hazard_alert_email']
+    alert_email = (data.get('site') or {}).get('manager_email') or CONFIG['hazard_alert_email']
     return send_email(alert_email, subject, body, attachments)
 
 # ============================================
