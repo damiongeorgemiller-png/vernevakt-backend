@@ -84,8 +84,8 @@ def get_db():
     if not DATABASE_URL:
         return None
     try:
-        import psycopg2
-        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        import psycopg
+        conn = psycopg.connect(DATABASE_URL)
         return conn
     except Exception as e:
         logger.error(f"[DB] Connection failed: {e}")
@@ -859,7 +859,11 @@ SHA Pipeline - Automatisk generert faremelding
         logger.error(f"[HAZARD] Could not attach PDF: {e}")
     
     # Send to hazard alert email (site manager)
-    alert_email = (data.get('site') or {}).get('manager_email') or CONFIG['hazard_alert_email']
+    alert_email = (data.get('site') or {}).get('manager_email','').strip()
+    if not alert_email:
+        alert_email = (data.get('site') or {}).get('office_email','').strip()
+    if not alert_email:
+        alert_email = CONFIG['hazard_alert_email']
     return send_email(alert_email, subject, body, attachments)
 
 # ============================================
@@ -1028,7 +1032,10 @@ class SHAHandler(BaseHTTPRequestHandler):
                 pdf_data = f.read()
             
             # Prepare email
-            office_email = site.get('office_email') or CONFIG['default_office_email']
+            office_email = site.get('office_email','').strip()
+            if not office_email:
+                self._send_response(400, {'error': 'E-post til kontor er pakrevd'})
+                return
             
             report_type = data.get('report_type', 'daglig')
             template = VERNERUNDE_TEMPLATES.get(report_type, VERNERUNDE_TEMPLATES['daglig'])
