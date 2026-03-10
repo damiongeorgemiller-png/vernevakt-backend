@@ -481,44 +481,98 @@ def generate_sha_report(data, photos, output_path):
         fmt_date = datetime.now().strftime('%d.%m.%Y')
         fmt_time = datetime.now().strftime('%H:%M')
 
-    # ── HEADER — clean, no nested tables ──
-    ORANGE = HexColor('#f59e0b')
-    BLACK  = HexColor('#111111')
+    # ── HEADER with Vernevakt SHA logo ──
+    ORANGE  = HexColor('#f59e0b')
+    YELLOW  = HexColor('#f5c842')
+    RUST    = HexColor('#d4622a')
+    BLACK   = HexColor('#111111')
+    DARKBG  = HexColor('#0d1520')
 
     type_label = {'daglig': 'Daglig vernerunde', 'ukentlig': 'Ukentlig vernerunde', 'fare': 'Farerapport'}.get(report_type, report_type)
-    title_text = 'FARERAPPORT' if report_type == 'fare' else 'VERNEVAKT'
 
-    # Row 1: black background, VERNEVAKT left, report type right
-    hdr_row1 = Table([[
-        Paragraph(f'<b>{title_text}</b>',
-                  style('H1L', fontSize=26, fontName='Helvetica-Bold', textColor=ORANGE, leading=30)),
-        Paragraph(f'Rapport type<br/><b>{type_label}</b>',
-                  style('H1R', fontSize=11, fontName='Helvetica-Bold', textColor=WHITE,
-                        alignment=TA_RIGHT, leading=16)),
-    ]], colWidths=[100*mm, 74*mm])
-    hdr_row1.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), BLACK),
-        ('TOPPADDING', (0,0), (-1,-1), 12),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-        ('LEFTPADDING', (0,0), (0,0), 10),
-        ('RIGHTPADDING', (1,0), (1,0), 10),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-    ]))
-    story.append(hdr_row1)
+    from reportlab.graphics.shapes import Drawing, Rect, String, Line, Polygon
+    from reportlab.graphics import renderPDF
+    import math
 
-    # Row 2: subtitle on black background
-    hdr_row2 = Table([[
-        Paragraph('Sikker HMS-dokumentasjon for norske byggeplasser',
-                  style('H2', fontSize=8, fontName='Helvetica', textColor=HexColor('#aaaaaa'))),
-        Paragraph('', style('H2R', fontSize=8)),
-    ]], colWidths=[120*mm, 54*mm])
-    hdr_row2.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), BLACK),
-        ('TOPPADDING', (0,0), (-1,-1), 0),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 10),
-        ('LEFTPADDING', (0,0), (0,0), 10),
-    ]))
-    story.append(hdr_row2)
+    # Header: full width, 32mm tall
+    hdr_w = 174 * mm
+    hdr_h = 32 * mm
+    d = Drawing(hdr_w, hdr_h)
+
+    # Dark navy background
+    d.add(Rect(0, 0, hdr_w, hdr_h, fillColor=DARKBG, strokeColor=None))
+
+    # ── HELMET — centered at hx=18mm, total height ~24mm ──
+    hx      = 18 * mm
+    # Brim at bottom
+    brim_w  = 13 * mm
+    brim_h  = 3 * mm
+    brim_y  = 4 * mm
+    brim_x  = hx - brim_w / 2
+    # Body above brim
+    body_w  = 16 * mm
+    body_h  = 7 * mm
+    body_y  = brim_y + brim_h
+    body_x  = hx - body_w / 2
+    # Dome above body
+    dome_r  = 8 * mm
+    dome_y  = body_y + body_h  # base of dome
+
+    d.add(Rect(brim_x, brim_y, brim_w, brim_h, fillColor=RUST,   strokeColor=None))
+    d.add(Rect(body_x, body_y, body_w, body_h, fillColor=YELLOW, strokeColor=None))
+
+    # Semicircle dome
+    pts = []
+    for i in range(19):
+        angle = math.pi * i / 18
+        px = hx    + dome_r * math.cos(math.pi - angle)
+        py = dome_y + dome_r * math.sin(angle)
+        pts.extend([px, py])
+    pts.extend([hx + dome_r, dome_y, hx - dome_r, dome_y])
+    d.add(Polygon(pts, fillColor=YELLOW, strokeColor=None))
+
+    # ── VERTICAL DIVIDER ──
+    div_x = 32 * mm
+    d.add(Line(div_x, 4*mm, div_x, hdr_h - 4*mm, strokeColor=RUST, strokeWidth=1.5))
+
+    # ── VERNEVAKT — large white bold ──
+    text_x = div_x + 5 * mm
+    d.add(String(text_x, hdr_h/2 + 2*mm, 'VERNEVAKT',
+                 fontName='Helvetica-Bold', fontSize=17,
+                 fillColor=HexColor('#ffffff')))
+
+    # ── — SHA — in yellow with dashes ──
+    sha_y   = hdr_h/2 - 6*mm
+    sha_x   = text_x
+    dash_len = 7 * mm
+    gap      = 2 * mm
+    sha_mid_y = sha_y + 2.5*mm
+
+    d.add(Line(sha_x, sha_mid_y, sha_x + dash_len, sha_mid_y,
+               strokeColor=YELLOW, strokeWidth=1.5))
+    d.add(String(sha_x + dash_len + gap, sha_y, 'SHA',
+                 fontName='Helvetica-Bold', fontSize=11,
+                 fillColor=YELLOW))
+    d.add(Line(sha_x + dash_len + gap + 12*mm, sha_mid_y,
+               sha_x + dash_len + gap + 12*mm + dash_len, sha_mid_y,
+               strokeColor=YELLOW, strokeWidth=1.5))
+
+    # ── ORANGE bottom accent line ──
+    d.add(Rect(0, 0, hdr_w, 1.2*mm, fillColor=RUST, strokeColor=None))
+
+    from reportlab.platypus import Flowable
+    class LogoHeader(Flowable):
+        def __init__(self, drawing):
+            Flowable.__init__(self)
+            self.drawing = drawing
+            self.width = drawing.width
+            self.height = drawing.height
+        def draw(self):
+            renderPDF.draw(self.drawing, self.canv, 0, 0)
+
+    story.append(LogoHeader(d))
+
+    # Logo header already includes subtitle
 
     # Orange line
     orange_line = Table([['']], colWidths=[174*mm], rowHeights=[3.5])
@@ -697,39 +751,27 @@ def generate_sha_report(data, photos, output_path):
         story.append(section_header('FOTODOKUMENTASJON'))
         story.append(Spacer(1, 3*mm))
         photo_labels = ['Oversikt', 'Detalj 1', 'Detalj 2', 'Avvik/Fare'] if report_type == 'fare' else ['Bilde 1', 'Bilde 2', 'Bilde 3', 'Bilde 4']
-        photo_row = []
-        photo_table_data = []
+        # Full width individual photos - one per row, full quality
         for i, photo_data in enumerate(photos[:4]):
             try:
                 img_data = base64.b64decode(photo_data.split(',')[1] if ',' in photo_data else photo_data)
                 img = PILImage.open(BytesIO(img_data))
-                img.thumbnail((400, 400), PILImage.Resampling.LANCZOS)
+                # Keep original aspect ratio, full width
+                orig_w, orig_h = img.size
+                max_w = 170*mm
+                aspect = orig_h / orig_w
+                img_h = min(max_w * aspect, 120*mm)
                 buf = BytesIO()
-                img.save(buf, format='JPEG', quality=85)
+                img.save(buf, format='JPEG', quality=95)
                 buf.seek(0)
-                rl_img = Image(buf, width=78*mm, height=58*mm)
-                photo_row.append(rl_img)
+                rl_img = Image(buf, width=max_w, height=img_h)
+                label = (photo_labels[i] if i < len(photo_labels) else f'Bilde {i+1}')
+                story.append(Paragraph(f'<b>Bilde {i+1} — {label}</b>', small_st))
+                story.append(rl_img)
+                story.append(Spacer(1, 4*mm))
             except Exception as e:
                 logger.error(f"Photo {i} error: {e}")
-                photo_row.append(Paragraph(f'Bilde {i+1} - feil', small_st))
-            if len(photo_row) == 2:
-                photo_table_data.append(photo_row)
-                photo_row = []
-        if photo_row:
-            while len(photo_row) < 2:
-                photo_row.append(Paragraph('', small_st))
-            photo_table_data.append(photo_row)
-        if photo_table_data:
-            pt = Table(photo_table_data, colWidths=[83*mm, 83*mm])
-            pt.setStyle(TableStyle([
-                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('GRID', (0,0), (-1,-1), 0.4, BORDER),
-                ('TOPPADDING', (0,0), (-1,-1), 6),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-            ]))
-            story.append(pt)
-        story.append(Spacer(1, 4*mm))
+                story.append(Paragraph(f'Bilde {i+1} - feil ved lasting', small_st))
 
     # ── APPROVAL ──
     story.append(section_header('GODKJENNING'))
@@ -1045,13 +1087,14 @@ class SHAHandler(BaseHTTPRequestHandler):
             backend_url = f"https://vernevakt-backend.onrender.com"
             approval_link = f"{backend_url}/approve?id={report_id}"
             body = f"""
-Ny Vernevakt-rapport mottatt og klar for godkjenning.
+VERNEVAKT SHA — Ny rapport mottatt
 
-Byggeplass: {site.get('name', 'Ikke oppgitt')}
-Adresse: {site.get('address', 'Ikke oppgitt')}
-Utfort av: {worker.get('name', 'Ukjent')} (HMS-kort: {worker.get('hms_kort', 'Ukjent')})
-Type: {template['name']}
-Tidspunkt: {data.get('timestamp', 'Ukjent')}
+Byggeplass : {site.get('name', 'Ikke oppgitt')}
+Adresse    : {site.get('address', 'Ikke oppgitt')}
+Utfort av  : {worker.get('name', 'Ukjent')} (HMS-kort: {worker.get('hms_kort', 'Ukjent')})
+Type       : {template['name']}
+Tidspunkt  : {data.get('timestamp', 'Ukjent')}
+Rapport-ID : {report_id}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 GODKJENN ELLER AVVIS RAPPORTEN:
@@ -1059,11 +1102,11 @@ GODKJENN ELLER AVVIS RAPPORTEN:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Klikk lenken ovenfor for a apne godkjenningssiden.
-Se vedlagt PDF for fullstendig rapport.
+PDF-rapporten er vedlagt denne e-posten.
 
 ---
-Vernevakt - Automatisk generert rapport
-Rapport-ID: {report_id}
+VERNEVAKT SHA | Sikker HMS-dokumentasjon
+Automatisk generert | Rapport-ID: {report_id}
 """
             
             # Send email
