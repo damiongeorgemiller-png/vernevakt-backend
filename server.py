@@ -481,12 +481,11 @@ def generate_sha_report(data, photos, output_path):
         fmt_date = datetime.now().strftime('%d.%m.%Y')
         fmt_time = datetime.now().strftime('%H:%M')
 
-    # ── HEADER with Vernevakt SHA logo ──
-    ORANGE  = HexColor('#f59e0b')
+    # ── HEADER — exact preview4 horizontal logo ──
     YELLOW  = HexColor('#f5c842')
     RUST    = HexColor('#d4622a')
-    BLACK   = HexColor('#111111')
-    DARKBG  = HexColor('#0d1520')
+    DARKBG  = HexColor('#111a17')
+    WHITE   = HexColor('#ffffff')
 
     type_label = {'daglig': 'Daglig vernerunde', 'ukentlig': 'Ukentlig vernerunde', 'fare': 'Farerapport'}.get(report_type, report_type)
 
@@ -494,71 +493,68 @@ def generate_sha_report(data, photos, output_path):
     from reportlab.graphics import renderPDF
     import math
 
-    # Header: full width, 32mm tall
+    # Preview4 horizontal logo was 560×150 SVG units.
+    # We scale it to fit our PDF header: hdr_h = 38mm.
+    # scale = 38mm / 150 = 0.2533 mm per SVG unit
+    # hdr_w = 174mm → in SVG units = 174/0.2533 = 687 units (wider than 560, logo stays left)
     hdr_w = 174 * mm
-    hdr_h = 32 * mm
+    hdr_h = 38 * mm
+    S = hdr_h / 150  # scale factor: SVG units → mm
+
     d = Drawing(hdr_w, hdr_h)
 
-    # Dark navy background
+    # Background
     d.add(Rect(0, 0, hdr_w, hdr_h, fillColor=DARKBG, strokeColor=None))
 
-    # ── HELMET — centered at hx=18mm, total height ~24mm ──
-    hx      = 18 * mm
-    # Brim at bottom
-    brim_w  = 13 * mm
-    brim_h  = 3 * mm
-    brim_y  = 4 * mm
-    brim_x  = hx - brim_w / 2
-    # Body above brim
-    body_w  = 16 * mm
-    body_h  = 7 * mm
-    body_y  = brim_y + brim_h
-    body_x  = hx - body_w / 2
-    # Dome above body
-    dome_r  = 8 * mm
-    dome_y  = body_y + body_h  # base of dome
+    # ReportLab y=0 is bottom. SVG y=0 is top. So we flip: rl_y = hdr_h - svg_y * S
+    def sy(svg_y):
+        return hdr_h - svg_y * S
 
-    d.add(Rect(brim_x, brim_y, brim_w, brim_h, fillColor=RUST,   strokeColor=None))
-    d.add(Rect(body_x, body_y, body_w, body_h, fillColor=YELLOW, strokeColor=None))
-
-    # Semicircle dome
+    # ── HELMET (exact preview4 coords, scaled) ──
+    # Yellow body rect: x=37, y=72, w=62, h=23
+    d.add(Rect(37*S, sy(72+23), 62*S, 23*S, fillColor=YELLOW, strokeColor=None))
+    # Yellow dome: M 37 72 A 31 31 0 0 1 99 72 — semicircle, center=(68,72), r=31
+    # Draw as polygon approximation
+    cx_d = 68 * S
+    cy_d = sy(72)
+    r_d  = 31 * S
     pts = []
     for i in range(19):
         angle = math.pi * i / 18
-        px = hx    + dome_r * math.cos(math.pi - angle)
-        py = dome_y + dome_r * math.sin(angle)
+        px = cx_d + r_d * math.cos(math.pi - angle)
+        py = cy_d + r_d * math.sin(angle)
         pts.extend([px, py])
-    pts.extend([hx + dome_r, dome_y, hx - dome_r, dome_y])
+    pts.extend([cx_d + r_d, cy_d, cx_d - r_d, cy_d])
     d.add(Polygon(pts, fillColor=YELLOW, strokeColor=None))
+    # Orange brim: x=43, y=94, w=50, h=10 — narrower than yellow
+    d.add(Rect(43*S, sy(94+10), 50*S, 10*S, fillColor=RUST, strokeColor=None))
 
-    # ── VERTICAL DIVIDER ──
-    div_x = 32 * mm
-    d.add(Line(div_x, 4*mm, div_x, hdr_h - 4*mm, strokeColor=RUST, strokeWidth=1.5))
+    # ── DIVIDER: x=128, y=20 to y=130 ──
+    d.add(Line(128*S, sy(130), 128*S, sy(20), strokeColor=RUST, strokeWidth=1.5))
 
-    # ── VERNEVAKT — large white bold ──
-    text_x = div_x + 5 * mm
-    d.add(String(text_x, hdr_h/2 + 2*mm, 'VERNEVAKT',
-                 fontName='Helvetica-Bold', fontSize=17,
-                 fillColor=HexColor('#ffffff')))
+    # ── VERNEVAKT: x=148, y=78, fontSize=33 ──
+    d.add(String(148*S, sy(78), 'VERNEVAKT',
+                 fontName='Helvetica-Bold', fontSize=int(33*S/mm*2.83),
+                 fillColor=WHITE))
 
-    # ── — SHA — in yellow with dashes ──
-    sha_y   = hdr_h/2 - 6*mm
-    sha_x   = text_x
-    dash_len = 7 * mm
-    gap      = 2 * mm
-    sha_mid_y = sha_y + 2.5*mm
+    # ── Left dash: x=148→186, y=104 ──
+    d.add(Line(148*S, sy(104), 186*S, sy(104), strokeColor=RUST, strokeWidth=1.8))
 
-    d.add(Line(sha_x, sha_mid_y, sha_x + dash_len, sha_mid_y,
-               strokeColor=YELLOW, strokeWidth=1.5))
-    d.add(String(sha_x + dash_len + gap, sha_y, 'SHA',
-                 fontName='Helvetica-Bold', fontSize=11,
+    # ── SHA: x=193, y=111, fontSize=19 ──
+    d.add(String(193*S, sy(111), 'SHA',
+                 fontName='Helvetica-Bold', fontSize=int(19*S/mm*2.83),
                  fillColor=YELLOW))
-    d.add(Line(sha_x + dash_len + gap + 12*mm, sha_mid_y,
-               sha_x + dash_len + gap + 12*mm + dash_len, sha_mid_y,
-               strokeColor=YELLOW, strokeWidth=1.5))
+
+    # ── Right dash: x=252→290, y=104 ──
+    d.add(Line(252*S, sy(104), 290*S, sy(104), strokeColor=RUST, strokeWidth=1.8))
+
+    # ── REPORT TYPE — right side ──
+    d.add(String(hdr_w - 3*mm, sy(50), type_label.upper(),
+                 fontName='Helvetica-Bold', fontSize=8,
+                 fillColor=HexColor('#ffffffaa'), textAnchor='end'))
 
     # ── ORANGE bottom accent line ──
-    d.add(Rect(0, 0, hdr_w, 1.2*mm, fillColor=RUST, strokeColor=None))
+    d.add(Rect(0, 0, hdr_w, 1.5*mm, fillColor=RUST, strokeColor=None))
 
     from reportlab.platypus import Flowable
     class LogoHeader(Flowable):
@@ -572,16 +568,6 @@ def generate_sha_report(data, photos, output_path):
 
     story.append(LogoHeader(d))
 
-    # Logo header already includes subtitle
-
-    # Orange line
-    orange_line = Table([['']], colWidths=[174*mm], rowHeights=[3.5])
-    orange_line.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), ORANGE),
-        ('TOPPADDING', (0,0), (-1,-1), 0),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
-    ]))
-    story.append(orange_line)
     story.append(Spacer(1, 5*mm))
 
     # ── RAPPORT INFO ──
